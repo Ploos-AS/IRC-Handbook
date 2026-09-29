@@ -1,0 +1,6 @@
+:s 005 bot CASEMAPPING=ascii PREFIX=(qaohv)~&@%+ CHANMODES=beI,k,l,imnst :supported
+:s 353 bot = #retro :~Owner @Alice %+Bob Plain
+:s 366 bot #retro :End of NAMES
+:op!u@h MODE #retro +ov Bob Plain
+:Alice!u@h NICK Alicia
+:Plain!u@h PART #retro :bye
