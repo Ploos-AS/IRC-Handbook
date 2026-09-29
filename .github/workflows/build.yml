@@ -1,0 +1,29 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  book:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lang: [no, en]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc texlive-xetex
+
+      - name: Build all formats
+        run: make LANG=${{ matrix.lang }} all
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: irc-handbook-${{ matrix.lang }}
+          path: build/${{ matrix.lang }}/
