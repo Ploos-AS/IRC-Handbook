@@ -138,6 +138,25 @@ class BotTests(unittest.TestCase):
   s.apply(parse_message(":s 366 bot #c :End"),p)
   self.assertNotIn(s.key("Alice"),s.members);self.assertIn(s.key("Alicia"),s.members)
   self.assertEqual(s.members[s.key("Bob")].modes,{"o","v"})
+ def test_registry_own_part_discards_channel_session(self):
+  r=ChannelRegistry(ServerFeatures(),"Bot")
+  r.apply(parse_message(":Bot!u@h JOIN #c"));r.apply(parse_message(":Alice!u@h JOIN #c"))
+  self.assertIn(r.key("#c"),r.channels)
+  r.apply(parse_message(":Bot!u@h PART #c :bye"))
+  self.assertNotIn(r.key("#c"),r.channels)
+ def test_registry_own_kick_discards_channel_session(self):
+  r=ChannelRegistry(ServerFeatures(),"Bot")
+  r.apply(parse_message(":Bot!u@h JOIN #c"))
+  r.apply(parse_message(":Op!u@h KICK #c Bot :bye"))
+  self.assertFalse(r.channels)
+ def test_registry_tracks_own_nick_change(self):
+  r=ChannelRegistry(ServerFeatures(),"Bot");r.apply(parse_message(":Bot!u@h NICK NewBot"))
+  self.assertEqual(r.own_nick,"NewBot")
+  r.apply(parse_message(":NewBot!u@h JOIN #new"));r.apply(parse_message(":NewBot!u@h PART #new"))
+  self.assertFalse(r.channels)
+ def test_registry_reset_drops_server_session_state(self):
+  r=ChannelRegistry(ServerFeatures(),"Bot");r.get("#a").add_member("Alice");r.get("#b").add_member("Bob")
+  r.reset();self.assertFalse(r.channels)
  def test_registry_routes_multiple_channels(self):
   f=ServerFeatures({"CASEMAPPING":"ascii","PREFIX":"(ov)@+","CHANMODES":"beI,k,l,imnst"});r=ChannelRegistry(f)
   for line in [":s 353 bot = #one :@Alice",":s 366 bot #one :End",":s 353 bot = #two :+Bob",":s 366 bot #two :End"]:
