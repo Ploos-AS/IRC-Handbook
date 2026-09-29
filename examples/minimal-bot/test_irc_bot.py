@@ -1,5 +1,5 @@
-import socket,threading,time,unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,assert_registry_invariants,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,channel_snapshot,CtcpMessage,Member,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,registry_snapshot,replay_transcript,response_for_line,sasl_authenticate_lines,sasl_plain,snapshot_diff,iter_lines
+import pathlib,socket,threading,time,unittest
+from irc_bot import AuthenticationError,Backoff,CapabilityState,assert_registry_invariants,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,channel_snapshot,CtcpMessage,Member,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,mutate_transcript,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,registry_snapshot,replay_transcript,response_for_line,sasl_authenticate_lines,sasl_plain,snapshot_diff,iter_lines
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -49,6 +49,30 @@ class BotTests(unittest.TestCase):
   with self.assertRaises(ValueError):parse_mode_changes("+o",[],"ov",("beI","k","l","imnst"))
  def test_mode_extra_parameter(self):
   with self.assertRaises(ValueError):parse_mode_changes("+i",["unused"],"ov",("beI","k","l","imnst"))
+ def corpus(self,name):
+  return (pathlib.Path(__file__).with_name("transcripts")/name).read_text().splitlines()
+ def test_corpus_names_modes(self):
+  snap=registry_snapshot(replay_transcript(self.corpus("names-modes.irc")))
+  self.assertEqual(snap["#retro"]["members"]["bob"]["modes"],["h","o","v"])
+  self.assertIn("alicia",snap["#retro"]["members"]);self.assertNotIn("plain",snap["#retro"]["members"])
+ def test_corpus_multichannel_global_events(self):
+  snap=registry_snapshot(replay_transcript(self.corpus("multichannel.irc")))
+  self.assertIn("alicia",snap["#one"]["members"]);self.assertIn("alicia",snap["#two"]["members"])
+  self.assertNotIn("carol",snap["#two"]["members"])
+ def test_corpus_resync_removes_stale_preserves_interleaved_join(self):
+  snap=registry_snapshot(replay_transcript(self.corpus("resync.irc")));members=snap["#sync"]["members"]
+  self.assertNotIn("old",members);self.assertIn("late",members);self.assertIn("during",members)
+ def test_seeded_mutations_preserve_invariants_when_parseable(self):
+  lines=self.corpus("multichannel.irc");seen=0
+  for mutated in mutate_transcript(lines,seed=20260929,rounds=64):
+   try:r=replay_transcript(mutated)
+   except ValueError:continue
+   self.assertTrue(assert_registry_invariants(r));seen+=1
+  self.assertGreater(seen,0)
+ def test_quit_property_removes_nick_from_every_channel(self):
+  lines=self.corpus("multichannel.irc")+[":Alicia!u@h QUIT :gone"]
+  snap=registry_snapshot(replay_transcript(lines))
+  self.assertTrue(all("alicia" not in channel["members"] for channel in snap.values()))
  def test_transcript_replay_is_deterministic(self):
   lines=[":s 005 bot CASEMAPPING=ascii PREFIX=(ov)@+ CHANMODES=beI,k,l,imnst :supported",
    ":s 353 bot = #one :@Alice +Bob",":s 366 bot #one :End",":op!u@h MODE #one +o Bob",":Alice!u@h NICK Alicia"]
