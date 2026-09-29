@@ -259,8 +259,14 @@ class ChannelState:
 
 class ChannelRegistry:
     """Route channel events to independent ChannelState instances."""
-    def __init__(self,features):
-        self.features=features;self.channels={}
+    def __init__(self,features,own_nick=None):
+        self.features=features;self.own_nick=own_nick;self.channels={}
+    def is_own(self,nick):
+        return self.own_nick is not None and irc_equal(nick,self.own_nick,self.features.casemapping)
+    def discard(self,name):
+        self.channels.pop(self.key(name),None)
+    def reset(self):
+        self.channels.clear()
     def key(self,name):return irc_casefold(name,self.features.casemapping)
     def get(self,name):
         key=self.key(name)
@@ -272,6 +278,15 @@ class ChannelRegistry:
         for state in old:
             state.configure(self.features);self.channels[self.key(state.name)]=state
     def apply(self,m):
+        sender=m.prefix.split("!",1)[0] if m.prefix else None
+        if m.command=="JOIN" and sender and m.params and self.is_own(sender):
+            self.get(m.params[0]).apply(m,self.features.prefix);return
+        if m.command=="PART" and sender and m.params and self.is_own(sender):
+            self.discard(m.params[0]);return
+        if m.command=="KICK" and len(m.params)>=2 and self.is_own(m.params[1]):
+            self.discard(m.params[0]);return
+        if m.command=="NICK" and sender and m.params and self.is_own(sender):
+            self.own_nick=m.params[0]
         if m.command=="353" and len(m.params)>=4:self.get(m.params[2]).apply(m,self.features.prefix);return
         if m.command=="366" and len(m.params)>=2:self.get(m.params[1]).apply(m,self.features.prefix);return
         if m.command in {"JOIN","PART"} and m.params:self.get(m.params[0]).apply(m,self.features.prefix);return
@@ -453,7 +468,7 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();channels=ChannelRegistry(features);healthy=False
+    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();channels=ChannelRegistry(features,c.nick);healthy=False
     with connect(c) as sock:
         sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
