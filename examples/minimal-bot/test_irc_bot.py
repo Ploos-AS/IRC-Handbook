@@ -120,9 +120,24 @@ class BotTests(unittest.TestCase):
   s=ChannelState("#c")
   s.apply(parse_message(":s 353 bot = #c :Alice"),{"o":"@","v":"+"})
   s.apply(parse_message(":Late!u@h JOIN #c"),{"o":"@","v":"+"})
-  s.names_seen.add(s.key("Late"))
   s.apply(parse_message(":s 366 bot #c :End"),{"o":"@","v":"+"})
   self.assertIn(s.key("Late"),s.members)
+ def test_part_during_names_is_not_resurrected_by_late_353(self):
+  s=ChannelState("#c");p={"o":"@","v":"+"}
+  s.apply(parse_message(":s 353 bot = #c :Alice Bob"),p)
+  s.apply(parse_message(":Bob!u@h PART #c :gone"),p)
+  s.apply(parse_message(":s 353 bot = #c :Bob Carol"),p)
+  s.apply(parse_message(":s 366 bot #c :End"),p)
+  self.assertNotIn(s.key("Bob"),s.members);self.assertIn(s.key("Carol"),s.members)
+ def test_nick_and_mode_during_names_replay_after_snapshot(self):
+  s=ChannelState("#c");p={"o":"@","v":"+"}
+  s.apply(parse_message(":s 353 bot = #c :Alice +Bob"),p)
+  s.apply(parse_message(":Alice!u@h NICK Alicia"),p)
+  s.apply(parse_message(":op!u@h MODE #c +o Bob"),p)
+  s.apply(parse_message(":s 353 bot = #c :Alice"),p)
+  s.apply(parse_message(":s 366 bot #c :End"),p)
+  self.assertNotIn(s.key("Alice"),s.members);self.assertIn(s.key("Alicia"),s.members)
+  self.assertEqual(s.members[s.key("Bob")].modes,{"o","v"})
  def test_registry_routes_multiple_channels(self):
   f=ServerFeatures({"CASEMAPPING":"ascii","PREFIX":"(ov)@+","CHANMODES":"beI,k,l,imnst"});r=ChannelRegistry(f)
   for line in [":s 353 bot = #one :@Alice",":s 366 bot #one :End",":s 353 bot = #two :+Bob",":s 366 bot #two :End"]:
