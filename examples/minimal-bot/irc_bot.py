@@ -428,6 +428,8 @@ class Registration:
         self.requested_nick=nick;self.channel=channel
         self.negotiation=Negotiation(use_sasl,sasl_required)
         self.phase="new";self.join_sent=False
+    @property
+    def registered(self):return self.phase=="registered"
     def start(self):
         if self.phase!="new":return []
         self.phase="cap";return ["CAP LS 302",f"NICK {self.requested_nick}",f"USER {self.requested_nick} 0 * :IRC Handbook Bot"]
@@ -437,7 +439,7 @@ class Registration:
         if m.command=="433":
             self.phase="registering";return [f"NICK {current_nick}_"]
         if m.command=="CAP":
-            if self.phase=="registered":return []
+            if self.registered:return []
             out=self.negotiation.actions(m)
             if any(x=="AUTHENTICATE PLAIN" for x in out):self.phase="sasl"
             elif any(x=="CAP END" for x in out):self.phase="registering"
