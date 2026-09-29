@@ -1,5 +1,5 @@
 import pathlib,socket,threading,time,unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,assert_registry_invariants,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,channel_snapshot,CtcpMessage,Member,ModeChange,ServerError,ServerFeatures,SessionResult,SessionState,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,mutate_transcript,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,registry_snapshot,replay_transcript,response_for_line,sasl_authenticate_lines,sasl_plain,snapshot_diff,iter_lines
+from irc_bot import AuthenticationError,Backoff,CapabilityState,assert_registry_invariants,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,channel_snapshot,CtcpMessage,Member,ModeChange,Registration,ServerError,ServerFeatures,SessionResult,SessionState,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,mutate_transcript,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,registry_snapshot,replay_transcript,response_for_line,sasl_authenticate_lines,sasl_plain,snapshot_diff,iter_lines
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -313,6 +313,30 @@ class BotTests(unittest.TestCase):
  def test_iter_lines_handles_fragmentation(self):
   left,right=socket.socketpair();right.sendall(b"PING :a\r");right.sendall(b"\nPING :b\r\n");right.shutdown(socket.SHUT_WR)
   self.assertEqual(list(iter_lines(left,poll_timeout=.02)),["PING :a","PING :b"]);right.close();left.close()
+ def test_registration_start_and_welcome_join_once(self):
+  r=Registration("Bot","#c")
+  self.assertEqual(r.start(),["CAP LS 302","NICK Bot","USER Bot 0 * :IRC Handbook Bot"])
+  self.assertEqual(r.phase,"cap");self.assertEqual(r.start(),[])
+  welcome=parse_message(":s 001 Bot :welcome")
+  self.assertEqual(r.actions(welcome,"Bot"),["JOIN #c"]);self.assertEqual(r.phase,"registered")
+  self.assertEqual(r.actions(welcome,"Bot"),[])
+ def test_registration_sasl_phase_and_success(self):
+  r=Registration("Bot","#c",True,True);r.start()
+  self.assertEqual(r.actions(parse_message(":s CAP Bot LS :sasl"),"Bot"),["CAP REQ :sasl"])
+  self.assertEqual(r.actions(parse_message(":s CAP Bot ACK :sasl"),"Bot"),["AUTHENTICATE PLAIN"])
+  self.assertEqual(r.phase,"sasl")
+  auth=r.actions(parse_message("AUTHENTICATE +"),"Bot","user","pass")
+  self.assertTrue(auth and all(x.startswith("AUTHENTICATE ") for x in auth))
+  self.assertEqual(r.actions(parse_message(":s 903 Bot :ok"),"Bot","user","pass"),["CAP END"])
+  self.assertEqual(r.phase,"registering")
+ def test_registration_required_sasl_failure(self):
+  r=Registration("Bot","#c",True,True);r.start()
+  with self.assertRaises(AuthenticationError):
+   r.actions(parse_message(":s 904 Bot :failed"),"Bot","user","pass")
+ def test_registration_nick_collision(self):
+  r=Registration("Bot","#c");r.start()
+  self.assertEqual(r.actions(parse_message(":s 433 * Bot :in use"),"Bot"),["NICK Bot_"])
+  self.assertEqual(r.phase,"registering")
  def test_session_state_is_fresh_per_connection(self):
   first=SessionState("Bot");first.apply(parse_message(":s 001 Bot :welcome"))
   first.apply(parse_message(":Bot!u@h JOIN #old"));first.apply(parse_message(":Bot!u@h NICK Changed"))
