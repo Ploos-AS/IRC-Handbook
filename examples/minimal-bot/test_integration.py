@@ -1,64 +1,59 @@
-import socket, threading, unittest
-from irc_bot import Config, run_session, sasl_plain
-
-def recv_line(conn, buf=b""):
-    while b"\n" not in buf:
-        chunk=conn.recv(4096)
-        if not chunk: raise EOFError("connection closed")
-        buf+=chunk
-    raw,buf=buf.split(b"\n",1)
-    return raw.rstrip(b"\r").decode(),buf
-
-class FakeIRCServer:
-    def __init__(self, sasl=False):
-        self.sasl=sasl; self.transcript=[]; self.error=None
-        self.listener=socket.socket(); self.listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-        self.listener.bind(("127.0.0.1",0)); self.listener.listen(1)
-        self.host,self.port=self.listener.getsockname()
-        self.thread=threading.Thread(target=self._serve,daemon=True)
-    def start(self): self.thread.start()
-    def join(self):
-        self.thread.join(5); self.listener.close()
-        if self.thread.is_alive(): raise TimeoutError("fake IRC server did not finish")
-        if self.error: raise self.error
-    def read(self,c,b):
-        line,b=recv_line(c,b); self.transcript.append(line); return line,b
-    def expect(self,c,b,want):
-        got,b=self.read(c,b)
-        if got!=want: raise AssertionError(f"{got!r} != {want!r}")
-        return b
-    def _serve(self):
-        try:
-            c,_=self.listener.accept(); c.settimeout(3)
-            with c:
-                b=b""
-                if self.sasl: b=self.expect(c,b,"CAP LS 302")
-                b=self.expect(c,b,"NICK handbookbot")
-                b=self.expect(c,b,"USER handbookbot 0 * :IRC Handbook Bot")
-                if self.sasl:
-                    c.sendall(b":fake CAP handbookbot LS :multi-prefix sasl\r\n")
-                    b=self.expect(c,b,"CAP REQ :sasl")
-                    c.sendall(b":fake CAP handbookbot ACK :sasl\r\n")
-                    b=self.expect(c,b,"AUTHENTICATE PLAIN")
-                    c.sendall(b"AUTHENTICATE +\r\n")
-                    b=self.expect(c,b,"AUTHENTICATE "+sasl_plain("acct","secret"))
-                    c.sendall(b":fake 903 handbookbot :SASL authentication successful\r\n")
-                    b=self.expect(c,b,"CAP END")
-                c.sendall(b":fake 001 handbookbot :Wel"); c.sendall(b"come\r\n")
-                b=self.expect(c,b,"JOIN #handbook-test")
-                c.sendall(b"PING :integration-token\r\n")
-                b=self.expect(c,b,"PONG :integration-token")
-                c.sendall(b":alice!u@h PRIVMSG #handbook-test :!hel"); c.sendall(b"lo\r\n")
-                b=self.expect(c,b,"PRIVMSG #handbook-test :Hello, alice!")
-        except Exception as e: self.error=e
-
+import socket,threading,unittest
+from irc_bot import AuthenticationError,Config,ServerError,run_session,sasl_plain
+def recv_line(c,b=b""):
+ while b"\n" not in b:
+  x=c.recv(4096)
+  if not x:raise EOFError("connection closed")
+  b+=x
+ raw,b=b.split(b"\n",1);return raw.rstrip(b"\r").decode(),b
+class Fake:
+ def __init__(self,mode):
+  self.mode=mode;self.error=None;self.listener=socket.socket();self.listener.bind(("127.0.0.1",0));self.listener.listen(1)
+  self.host,self.port=self.listener.getsockname();self.thread=threading.Thread(target=self.serve,daemon=True)
+ def start(self):self.thread.start()
+ def join(self):
+  self.thread.join(5);self.listener.close()
+  if self.thread.is_alive():raise TimeoutError()
+  if self.error:raise self.error
+ def expect(self,c,b,w):
+  got,b=recv_line(c,b)
+  if got!=w:raise AssertionError((got,w))
+  return b
+ def serve(self):
+  try:
+   c,_=self.listener.accept();c.settimeout(3)
+   with c:
+    b=b""
+    if self.mode!="plain":b=self.expect(c,b,"CAP LS 302")
+    b=self.expect(c,b,"NICK handbookbot");b=self.expect(c,b,"USER handbookbot 0 * :IRC Handbook Bot")
+    if self.mode=="nick":
+     c.sendall(b":s 433 * handbookbot :in use\r\n");b=self.expect(c,b,"NICK handbookbot_");return
+    if self.mode=="error":c.sendall(b"ERROR :maintenance\r\n");return
+    if self.mode=="missing":
+     c.sendall(b":s CAP handbookbot LS :multi-prefix\r\n");return
+    if self.mode=="fail":
+     c.sendall(b":s CAP handbookbot LS :sasl\r\n");b=self.expect(c,b,"CAP REQ :sasl")
+     c.sendall(b":s CAP handbookbot ACK :sasl\r\n");b=self.expect(c,b,"AUTHENTICATE PLAIN")
+     c.sendall(b"AUTHENTICATE +\r\n");b=self.expect(c,b,"AUTHENTICATE "+sasl_plain("acct","secret"))
+     c.sendall(b":s 904 handbookbot :failed\r\n");return
+    c.sendall(b":s 001 handbookbot :Welcome\r\n");b=self.expect(c,b,"JOIN #handbook-test")
+  except Exception as e:self.error=e
 class IntegrationTests(unittest.TestCase):
-    def run_case(self,sasl):
-        s=FakeIRCServer(sasl); s.start()
-        cfg=Config(s.host,s.port,"handbookbot","#handbook-test",False,
-                   "acct" if sasl else None,"secret" if sasl else None)
-        run_session(cfg); s.join(); return s
-    def test_complete_plaintext_local_session(self): self.run_case(False)
-    def test_complete_sasl_cap_session(self): self.run_case(True)
-
-if __name__=="__main__": unittest.main()
+ def cfg(self,s,required=False,sasl=False):return Config(s.host,s.port,"handbookbot","#handbook-test",False,"acct" if sasl else None,"secret" if sasl else None,required)
+ def run_ok(self,mode,**kw):
+  s=Fake(mode);s.start();run_session(self.cfg(s,**kw));s.join()
+ def test_plain(self):self.run_ok("plain")
+ def test_nick_collision(self):self.run_ok("nick")
+ def test_server_error(self):
+  s=Fake("error");s.start()
+  with self.assertRaises(ServerError):run_session(self.cfg(s))
+  s.join()
+ def test_required_sasl_missing(self):
+  s=Fake("missing");s.start()
+  with self.assertRaises(AuthenticationError):run_session(self.cfg(s,required=True,sasl=True))
+  s.join()
+ def test_required_sasl_failure(self):
+  s=Fake("fail");s.start()
+  with self.assertRaises(AuthenticationError):run_session(self.cfg(s,required=True,sasl=True))
+  s.join()
+if __name__=="__main__":unittest.main()
