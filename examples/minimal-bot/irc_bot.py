@@ -214,7 +214,9 @@ class ChannelState:
         if m.command=="353" and len(m.params)>=4 and irc_equal(m.params[2],self.name,self.casemapping):
             self.add_names(m.params[3],prefix_map);return
         if m.command=="366" and len(m.params)>=2 and irc_equal(m.params[1],self.name,self.casemapping):self.end_names();return
-        if m.command=="JOIN" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.add_member(sender)
+        if m.command=="JOIN" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):
+            self.add_member(sender)
+            if self.names_active:self.names_seen.add(self.key(sender))
         elif m.command=="PART" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(sender)
         elif m.command=="KICK" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(m.params[1])
         elif m.command=="QUIT" and sender:self.remove_member(sender)
