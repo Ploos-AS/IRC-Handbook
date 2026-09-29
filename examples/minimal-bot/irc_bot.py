@@ -7,6 +7,12 @@ from dataclasses import dataclass
 class SessionError(Exception): pass
 class AuthenticationError(SessionError): pass
 class ServerError(SessionError): pass
+class ConnectionClosed(SessionError): pass
+
+@dataclass(frozen=True)
+class SessionResult:
+    healthy:bool
+    stopped:bool=False
 
 @dataclass(frozen=True)
 class Message:
@@ -307,7 +313,7 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required)
+    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);healthy=False
     with connect(c) as sock:
         sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
@@ -316,6 +322,7 @@ def run_session(c,stop=None):
             print(f"<< {line}")
             try:m=parse_message(line)
             except ValueError:continue
+            if m.command=="001":healthy=True
             negotiated=negotiation.actions(m)
             responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required)
             for response in responses:
@@ -324,6 +331,8 @@ def run_session(c,stop=None):
         if stop.requested:
             try:sock.sendall(encode_line("QUIT :Shutting down"))
             except OSError:pass
+            return SessionResult(healthy,True)
+        raise ConnectionClosed("IRC server closed the connection")
 def validate(c):
     if (c.sasl_user is None)!=(c.sasl_password is None):raise SystemExit("set both IRC_SASL_USER and IRC_SASL_PASSWORD")
     if c.sasl_required and not c.use_sasl:raise SystemExit("IRC_SASL_REQUIRED needs SASL credentials")
@@ -333,9 +342,11 @@ def main():
     signal.signal(signal.SIGINT,stop.request);signal.signal(signal.SIGTERM,stop.request)
     backoff=Backoff()
     while not stop.requested:
-        try:run_session(c,stop);backoff.reset()
+        try:
+            result=run_session(c,stop)
+            if result.healthy:backoff.reset()
         except AuthenticationError as e:raise SystemExit(f"authentication policy failed: {e}")
-        except (OSError,ssl.SSLError,ServerError) as e:print(f"session error: {e}")
+        except (OSError,ssl.SSLError,SessionError) as e:print(f"session error: {e}")
         if stop.requested:break
         delay=backoff.next_delay();print(f"reconnecting in {delay:g}s")
         # sleep in short intervals so SIGINT/SIGTERM can stop reconnect promptly
