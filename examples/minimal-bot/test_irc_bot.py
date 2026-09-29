@@ -1,5 +1,5 @@
 import socket,threading,time,unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,ConnectionClosed,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain,iter_lines
+from irc_bot import AuthenticationError,Backoff,CapabilityState,ConnectionClosed,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain,iter_lines
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -21,6 +21,15 @@ class BotTests(unittest.TestCase):
  def test_isupport_boolean_and_removed(self):
   m=parse_message(":s 005 b SAFELIST -WHOX :are supported")
   self.assertEqual(parse_isupport(m),{"SAFELIST":True,"WHOX":False})
+ def test_server_features_accumulate_and_remove(self):
+  f=ServerFeatures()
+  f.update(parse_message(":s 005 b CASEMAPPING=ascii PREFIX=(qaohv)~&@%+ :supported"))
+  f.update(parse_message(":s 005 b CHANMODES=beI,k,l,imnst -PREFIX :supported"))
+  self.assertEqual(f.casemapping,"ascii");self.assertEqual(f.prefix,{"o":"@","v":"+"})
+  self.assertEqual(f.chanmodes,("beI","k","l","imnst"))
+ def test_server_features_unknown_casemapping_falls_back(self):
+  f=ServerFeatures({"CASEMAPPING":"future-map"})
+  self.assertEqual(f.casemapping,"rfc1459")
  def test_prefix(self):
   self.assertEqual(parse_prefix("(qaohv)~&@%+"),{"q":"~","a":"&","o":"@","h":"%","v":"+"})
   self.assertEqual(parse_prefix("(ov)@"),{})
@@ -71,6 +80,11 @@ class BotTests(unittest.TestCase):
   self.assertFalse(irc_equal("^","~","strict-rfc1459"))
  def test_private_target_uses_irc_casefold(self):
   self.assertEqual(response_for_line(":a!u@h PRIVMSG {BOT} :!hello","[bot]","#c"),["PRIVMSG a :Hello, a!"])
+ def test_action_mapping_can_be_server_selected(self):
+  m=parse_message(":a!u@h PRIVMSG {BOT} :!hello")
+  from irc_bot import actions_for_message
+  self.assertEqual(actions_for_message(m,"[bot]","#c",case_mapping="ascii"),["PRIVMSG {BOT} :Hello, a!"])
+  self.assertEqual(actions_for_message(m,"[bot]","#c",case_mapping="rfc1459"),["PRIVMSG a :Hello, a!"])
  def test_ctcp_parse_and_frame(self):
   self.assertEqual(parse_ctcp("\\x01ACTION waves\\x01"),CtcpMessage("ACTION","waves"))
   self.assertEqual(ctcp_frame("PING","123"),"\\x01PING 123\\x01")
