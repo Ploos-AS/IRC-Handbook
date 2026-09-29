@@ -6,6 +6,12 @@ class BotTests(unittest.TestCase):
   with self.assertRaises(ValueError):encode_line("X\r\nOPER bad")
  def test_tag_unescape_is_single_pass(self):
   self.assertEqual(parse_message("@x=one\\\\stwo\\:three\\q :s CMD").tags["x"],"one\\stwo;threeq")
+ def test_tag_unescape_does_not_decode_generated_escape(self):
+  self.assertEqual(parse_message(r"@x=\\\\s CMD").tags["x"],r"\s")
+ def test_tag_unescape_unknown_escape_drops_only_backslash(self):
+  self.assertEqual(parse_message(r"@x=a\qb CMD").tags["x"],"aqb")
+ def test_tag_unescape_trailing_backslash_is_dropped(self):
+  self.assertEqual(parse_message("@x=value\\\\ CMD").tags["x"],"value\\")
  def test_parser(self):
   m=parse_message("@time=x;flag :n!u@h PRIVMSG #c :hello world")
   self.assertEqual((m.tags,m.prefix,m.command,m.params),({"time":"x","flag":None},"n!u@h","PRIVMSG",["#c","hello world"]))
@@ -225,8 +231,11 @@ class BotTests(unittest.TestCase):
  def test_433(self):self.assertEqual(response_for_line(":s 433 * b :used","b","#c"),["NICK b_"])
  def test_error(self):
   with self.assertRaises(ServerError):response_for_line("ERROR :bye","b","#c")
- def test_required_sasl(self):
-  with self.assertRaises(AuthenticationError):response_for_line(":s CAP b LS :multi-prefix","b","#c","a","p",True)
+ def test_cap_without_negotiation_has_no_stateless_fallback(self):
+  self.assertEqual(response_for_line(":s CAP b LS :sasl","b","#c","a","p",True),[])
+ def test_response_helper_can_use_stateful_negotiation(self):
+  n=Negotiation(True,True)
+  self.assertEqual(response_for_line(":s CAP b LS :sasl server-time","b","#c","a","p",True,n),["CAP REQ :server-time sasl"])
  def test_auth(self):self.assertEqual(response_for_line("AUTHENTICATE +","b","#c","a","p"),["AUTHENTICATE "+sasl_plain("a","p")])
  def test_sasl_authenticate_chunking(self):
   lines=sasl_authenticate_lines("u","p"*600)
