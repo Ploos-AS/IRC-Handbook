@@ -1,5 +1,5 @@
-import unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain
+import socket,threading,time,unittest
+from irc_bot import AuthenticationError,Backoff,CapabilityState,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain,iter_lines
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -140,6 +140,14 @@ class BotTests(unittest.TestCase):
   password="p"
   while len(sasl_plain("u",password))%400:password+="p"
   self.assertEqual(sasl_authenticate_lines("u",password)[-1],"AUTHENTICATE +")
+ def test_iter_lines_stops_while_peer_is_silent(self):
+  left,right=socket.socketpair();stop=StopFlag();done=[]
+  def consume():done.extend(iter_lines(left,stop,.02))
+  th=threading.Thread(target=consume);th.start();time.sleep(.04);stop.request();th.join(.3)
+  right.close();left.close();self.assertFalse(th.is_alive());self.assertEqual(done,[])
+ def test_iter_lines_handles_fragmentation(self):
+  left,right=socket.socketpair();right.sendall(b"PING :a\\r");right.sendall(b"\\nPING :b\\r\\n");right.shutdown(socket.SHUT_WR)
+  self.assertEqual(list(iter_lines(left,poll_timeout=.02)),["PING :a","PING :b"]);right.close();left.close()
  def test_backoff_sequence_and_cap(self):
   b=Backoff();self.assertEqual([b.next_delay() for _ in range(7)],[2,4,8,16,32,60,60])
  def test_backoff_reset(self):
