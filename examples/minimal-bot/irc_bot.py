@@ -198,6 +198,38 @@ def ctcp_reply(m,nick):
     if request.command=="TIME":return [f"NOTICE {sender} :"+ctcp_frame("TIME","not exposed by educational bot")]
     return []
 
+def parse_capabilities(text):
+    """Parse a CAP capability list into {name: value|None}."""
+    out={}
+    for token in text.split():
+        name,eq,value=token.partition("=")
+        out[name]=value if eq else None
+    return out
+
+class CapabilityState:
+    """Track advertised and enabled IRCv3 capabilities."""
+    def __init__(self):self.available={};self.enabled=set();self._ls_pending={}
+    def apply(self,m):
+        if m.command!="CAP" or len(m.params)<2:return
+        sub=m.params[1].upper()
+        if sub=="LS":
+            continuation=len(m.params)>=3 and m.params[-2]=="*"
+            self._ls_pending.update(parse_capabilities(m.params[-1]))
+            if not continuation:self.available.update(self._ls_pending);self._ls_pending.clear()
+        elif sub=="NEW":
+            self.available.update(parse_capabilities(m.params[-1]))
+        elif sub=="DEL":
+            for name in parse_capabilities(m.params[-1]):
+                self.available.pop(name,None);self.enabled.discard(name)
+        elif sub=="ACK":
+            for name in parse_capabilities(m.params[-1]):
+                if name.startswith("-"):self.enabled.discard(name[1:])
+                else:self.enabled.add(name)
+
+def message_metadata(m):
+    """Expose common IRCv3 message tags without requiring them."""
+    return {k:m.tags.get(k) for k in ("time","account","msgid","batch") if k in m.tags}
+
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
