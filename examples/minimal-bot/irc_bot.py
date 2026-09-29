@@ -385,16 +385,6 @@ def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_re
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
     if m.command=="433":return [f"NICK {nick}_"]
     if m.command=="PING" and m.params:return ["PONG :"+m.params[-1]]
-    if use_sasl and m.command=="CAP" and len(m.params)>=2:
-        sub=m.params[-2] if len(m.params)>=3 else m.params[1];caps=m.params[-1].split()
-        if sub=="LS":
-            if "sasl" in caps:return ["CAP REQ :sasl"]
-            if sasl_required:raise AuthenticationError("server does not advertise SASL")
-            return ["CAP END"]
-        if sub=="ACK" and "sasl" in caps:return ["AUTHENTICATE PLAIN"]
-        if sub=="NAK":
-            if sasl_required:raise AuthenticationError("server rejected SASL capability")
-            return ["CAP END"]
     if use_sasl and m.command=="AUTHENTICATE" and m.params==["+"]:return sasl_authenticate_lines(sasl_user,sasl_password)
     if use_sasl and m.command=="903":return ["CAP END"]
     if use_sasl and m.command in {"904","905","906","907"}:
@@ -408,9 +398,12 @@ def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_re
         if parse_ctcp(text):return []
         if text.strip()=="!hello":return [f"PRIVMSG {sender if irc_equal(target,nick,case_mapping) else target} :Hello, {sender}!"]
     return []
-def response_for_line(line,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
+def response_for_line(line,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False,negotiation=None):
     try:m=parse_message(line)
     except ValueError:return []
+    if m.command=="CAP":
+        if negotiation is None:return []
+        return negotiation.actions(m)
     return actions_for_message(m,nick,channel,sasl_user,sasl_password,sasl_required)
 def iter_lines(sock,stop=None,poll_timeout=.5):
     """Yield IRC lines while periodically returning control for shutdown checks."""
