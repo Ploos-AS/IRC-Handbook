@@ -1,5 +1,5 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,ChannelState,ModeChange,ServerError,StopFlag,encode_line,irc_casefold,irc_equal,is_numeric,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,ChannelState,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -69,6 +69,24 @@ class BotTests(unittest.TestCase):
   self.assertFalse(irc_equal("^","~","strict-rfc1459"))
  def test_private_target_uses_irc_casefold(self):
   self.assertEqual(response_for_line(":a!u@h PRIVMSG {BOT} :!hello","[bot]","#c"),["PRIVMSG a :Hello, a!"])
+ def test_ctcp_parse_and_frame(self):
+  self.assertEqual(parse_ctcp("\\x01ACTION waves\\x01"),CtcpMessage("ACTION","waves"))
+  self.assertEqual(ctcp_frame("PING","123"),"\\x01PING 123\\x01")
+  self.assertIsNone(parse_ctcp("ordinary text"))
+ def test_ctcp_direct_version(self):
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01VERSION\\x01","bot","#c"),
+   ["NOTICE a :\\x01VERSION IRC Handbook educational bot\\x01"])
+ def test_ctcp_ping_echoes_opaque_argument(self):
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01PING 123 456\\x01","bot","#c"),
+   ["NOTICE a :\\x01PING 123 456\\x01"])
+ def test_ctcp_time_does_not_expose_clock(self):
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01TIME\\x01","bot","#c"),
+   ["NOTICE a :\\x01TIME not exposed by educational bot\\x01"])
+ def test_ctcp_no_channel_or_notice_reply(self):
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG #c :\\x01VERSION\\x01","bot","#c"),[])
+  self.assertEqual(response_for_line(":a!u@h NOTICE bot :\\x01VERSION x\\x01","bot","#c"),[])
+ def test_ctcp_action_is_not_a_query(self):
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01ACTION waves\\x01","bot","#c"),[])
  def test_ping(self):self.assertEqual(response_for_line("PING :s","b","#c"),["PONG :s"])
  def test_433(self):self.assertEqual(response_for_line(":s 433 * b :used","b","#c"),["NICK b_"])
  def test_error(self):
