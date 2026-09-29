@@ -62,6 +62,22 @@ def parse_privmsg(line):
     if m.command!="PRIVMSG" or len(m.params)<2 or not m.prefix:return None
     return m.prefix.split("!",1)[0],m.params[0],m.params[1]
 def sasl_plain(u,p):return base64.b64encode(("\0"+u+"\0"+p).encode()).decode("ascii")
+
+def parse_isupport(m):
+    """Parse useful 005 RPL_ISUPPORT tokens into a small feature dictionary."""
+    if m.command!="005" or len(m.params)<2:return {}
+    out={}
+    # params[0] is our nick; the final human-readable parameter is not a token.
+    for token in m.params[1:-1]:
+        if token.startswith("-"):
+            out[token[1:]]=False
+        else:
+            key,eq,value=token.partition("=")
+            out[key]=value if eq else True
+    return out
+
+def is_numeric(m):
+    return len(m.command)==3 and m.command.isdigit()
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
