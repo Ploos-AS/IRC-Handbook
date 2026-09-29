@@ -1,9 +1,11 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,CapabilityState,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
   with self.assertRaises(ValueError):encode_line("X\r\nOPER bad")
+ def test_tag_unescape_is_single_pass(self):
+  self.assertEqual(parse_message("@x=one\\\\stwo\\:three\\q :s CMD").tags["x"],"one\\stwo;threeq")
  def test_parser(self):
   m=parse_message("@time=x;flag :n!u@h PRIVMSG #c :hello world")
   self.assertEqual((m.tags,m.prefix,m.command,m.params),({"time":"x","flag":None},"n!u@h","PRIVMSG",["#c","hello world"]))
@@ -130,6 +132,14 @@ class BotTests(unittest.TestCase):
  def test_required_sasl(self):
   with self.assertRaises(AuthenticationError):response_for_line(":s CAP b LS :multi-prefix","b","#c","a","p",True)
  def test_auth(self):self.assertEqual(response_for_line("AUTHENTICATE +","b","#c","a","p"),["AUTHENTICATE "+sasl_plain("a","p")])
+ def test_sasl_authenticate_chunking(self):
+  lines=sasl_authenticate_lines("u","p"*600)
+  self.assertTrue(all(len(x.removeprefix("AUTHENTICATE "))<=400 for x in lines))
+  self.assertGreater(len(lines),1)
+ def test_sasl_exact_chunk_gets_terminator(self):
+  password="p"
+  while len(sasl_plain("u",password))%400:password+="p"
+  self.assertEqual(sasl_authenticate_lines("u",password)[-1],"AUTHENTICATE +")
  def test_backoff_sequence_and_cap(self):
   b=Backoff();self.assertEqual([b.next_delay() for _ in range(7)],[2,4,8,16,32,60,60])
  def test_backoff_reset(self):
