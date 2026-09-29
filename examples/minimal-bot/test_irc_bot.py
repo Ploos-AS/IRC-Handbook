@@ -49,6 +49,24 @@ class BotTests(unittest.TestCase):
   with self.assertRaises(ValueError):parse_mode_changes("+o",[],"ov",("beI","k","l","imnst"))
  def test_mode_extra_parameter(self):
   with self.assertRaises(ValueError):parse_mode_changes("+i",["unused"],"ov",("beI","k","l","imnst"))
+ def test_names_replay_with_dynamic_prefixes(self):
+  f=ServerFeatures();f.update(parse_message(":s 005 bot CASEMAPPING=ascii PREFIX=(qaohv)~&@%+ CHANMODES=beI,k,l,imnst :supported"))
+  s=ChannelState("#c");s.configure(f)
+  s.apply(parse_message(":s 353 bot = #c :~Owner @Op %+Helper Plain"),f.prefix)
+  self.assertEqual(s.members[s.key("Owner")].modes,{"q"})
+  self.assertEqual(s.members[s.key("Op")].modes,{"o"})
+  self.assertEqual(s.members[s.key("Helper")].modes,{"h","v"})
+  self.assertEqual(s.members[s.key("Plain")].modes,set())
+ def test_names_then_live_mode_and_nick(self):
+  f=ServerFeatures({"PREFIX":"(ov)@+","CHANMODES":"beI,k,l,imnst"})
+  s=ChannelState("#c");s.configure(f)
+  for line in [":s 353 bot = #c :@Alice +Bob",":s 366 bot #c :End",":op MODE #c +o Bob",":Alice!u@h NICK Alicia"]:
+   s.apply(parse_message(line),f.prefix)
+  self.assertEqual(s.members[s.key("Bob")].modes,{"o","v"})
+  self.assertEqual(s.members[s.key("Alicia")].modes,{"o"})
+ def test_channel_state_configures_ascii_mapping(self):
+  f=ServerFeatures({"CASEMAPPING":"ascii"});s=ChannelState("#c");s.configure(f);s.add_member("[Nick]")
+  self.assertIn(s.key("[nick]"),s.members);self.assertNotEqual(s.key("[nick]"),s.key("{nick}"))
  def test_channel_state_lifecycle_and_modes(self):
   s=ChannelState("#Retro")
   for line in [":Alice!u@h JOIN #retro",":Bob!u@h JOIN #retro",":op!u@h MODE #retro +ov Alice Bob"]:
