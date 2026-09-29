@@ -7,6 +7,7 @@ on:
     paths:
       - 'examples/minimal-bot/**'
       - '.github/workflows/minimal-bot.yml'
+      - 'docs/qualification/**'
   pull_request:
     paths:
       - 'examples/minimal-bot/**'
