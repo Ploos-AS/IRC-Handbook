@@ -246,6 +246,37 @@ class ChannelRegistry:
         if m.command in {"QUIT","NICK"}:
             for state in self.channels.values():state.apply(m,self.features.prefix)
 
+def channel_snapshot(state):
+    return {"name":state.name,"casemapping":state.casemapping,
+     "members":{k:{"nick":m.nick,"modes":sorted(m.modes)} for k,m in sorted(state.members.items())},
+     "modes":sorted(state.modes),"mode_values":dict(sorted(state.mode_values.items())),
+     "lists":{k:sorted(v) for k,v in sorted(state.lists.items())},"names_active":state.names_active}
+
+def registry_snapshot(registry):
+    return {k:channel_snapshot(v) for k,v in sorted(registry.channels.items())}
+
+def snapshot_diff(before,after):
+    before_keys=set(before);after_keys=set(after)
+    return {"added":sorted(after_keys-before_keys),"removed":sorted(before_keys-after_keys),
+     "changed":sorted(k for k in before_keys&after_keys if before[k]!=after[k])}
+
+def assert_registry_invariants(registry):
+    for key,state in registry.channels.items():
+        if key!=registry.key(state.name):raise AssertionError("channel registry key mismatch")
+        for member_key,member in state.members.items():
+            if member_key!=state.key(member.nick):raise AssertionError("member key mismatch")
+            if not member.modes.issubset(set(state.prefix_modes)):raise AssertionError("unknown member prefix mode")
+    return True
+
+def replay_transcript(lines,features=None,check_invariants=True):
+    features=features or ServerFeatures();registry=ChannelRegistry(features)
+    for line in lines:
+        m=parse_message(line)
+        if m.command=="005":features.update(m);registry.reconfigure()
+        registry.apply(m)
+        if check_invariants:assert_registry_invariants(registry)
+    return registry
+
 CTCP_DELIM="\\x01"
 
 @dataclass(frozen=True)
