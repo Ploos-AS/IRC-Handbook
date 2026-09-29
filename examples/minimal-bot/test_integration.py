@@ -1,5 +1,5 @@
 import socket,threading,time,unittest
-from irc_bot import AuthenticationError,Config,ServerError,StopFlag,run_session,sasl_plain,validate
+from irc_bot import AuthenticationError,Config,ConnectionClosed,ServerError,SessionResult,StopFlag,run_session,sasl_plain,validate
 def recv_line(c,b=b""):
  while b"\n" not in b:
   x=c.recv(4096)
@@ -50,15 +50,22 @@ class IntegrationTests(unittest.TestCase):
  def cfg(self,s,required=False,sasl=False):return Config(s.host,s.port,"handbookbot","#handbook-test",False,"acct" if sasl else None,"secret" if sasl else None,required)
  def run_ok(self,mode,**kw):
   s=Fake(mode);s.start();run_session(self.cfg(s,**kw));s.join()
- def test_plain(self):self.run_ok("plain")
+ def test_plain_eof_is_explicit_disconnect(self):
+  s=Fake("plain");s.start()
+  with self.assertRaises(ConnectionClosed):run_session(self.cfg(s))
+  s.join()
  def test_sasl_plain_requires_tls(self):
   c=Config("localhost",6697,"bot","#c",False,"acct","secret",True)
   with self.assertRaises(SystemExit):validate(c)
  def test_silent_server_shutdown_sends_quit(self):
   s=Fake("stop");s.start();stop=StopFlag()
-  th=threading.Thread(target=run_session,args=(self.cfg(s),stop));th.start();time.sleep(.2);stop.request();th.join(2);s.join()
-  self.assertFalse(th.is_alive())
- def test_nick_collision(self):self.run_ok("nick")
+  result=[]
+  th=threading.Thread(target=lambda:result.append(run_session(self.cfg(s),stop)));th.start();time.sleep(.2);stop.request();th.join(2);s.join()
+  self.assertFalse(th.is_alive());self.assertEqual(result,[SessionResult(False,True)])
+ def test_nick_collision_then_eof_is_disconnect(self):
+  s=Fake("nick");s.start()
+  with self.assertRaises(ConnectionClosed):run_session(self.cfg(s))
+  s.join()
  def test_server_error(self):
   s=Fake("error");s.start()
   with self.assertRaises(ServerError):run_session(self.cfg(s))
