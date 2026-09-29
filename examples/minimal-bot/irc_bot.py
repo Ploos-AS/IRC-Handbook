@@ -62,6 +62,10 @@ def parse_privmsg(line):
     if m.command!="PRIVMSG" or len(m.params)<2 or not m.prefix:return None
     return m.prefix.split("!",1)[0],m.params[0],m.params[1]
 def sasl_plain(u,p):return base64.b64encode(("\0"+u+"\0"+p).encode()).decode("ascii")
+def sasl_authenticate_lines(u,p):
+    payload=sasl_plain(u,p);chunks=[payload[i:i+400] for i in range(0,len(payload),400)]
+    if len(payload)%400==0:chunks.append("+")
+    return ["AUTHENTICATE "+chunk for chunk in chunks]
 
 def parse_isupport(m):
     """Parse useful 005 RPL_ISUPPORT tokens into a small feature dictionary."""
@@ -272,7 +276,7 @@ def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_re
         if sub=="NAK":
             if sasl_required:raise AuthenticationError("server rejected SASL capability")
             return ["CAP END"]
-    if use_sasl and m.command=="AUTHENTICATE" and m.params==["+"]:return ["AUTHENTICATE "+sasl_plain(sasl_user,sasl_password)]
+    if use_sasl and m.command=="AUTHENTICATE" and m.params==["+"]:return sasl_authenticate_lines(sasl_user,sasl_password)
     if use_sasl and m.command=="903":return ["CAP END"]
     if use_sasl and m.command in {"904","905","906","907"}:
         if sasl_required:raise AuthenticationError("SASL authentication failed")
@@ -314,10 +318,12 @@ def run_session(c,stop=None):
             negotiated=negotiation.actions(m)
             responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required)
             for response in responses:
-                print(f">> {response}");sock.sendall(encode_line(response))
+                shown="AUTHENTICATE <redacted>" if response.startswith("AUTHENTICATE ") and response!="AUTHENTICATE PLAIN" else response
+                print(f">> {shown}");sock.sendall(encode_line(response))
 def validate(c):
     if (c.sasl_user is None)!=(c.sasl_password is None):raise SystemExit("set both IRC_SASL_USER and IRC_SASL_PASSWORD")
     if c.sasl_required and not c.use_sasl:raise SystemExit("IRC_SASL_REQUIRED needs SASL credentials")
+    if c.use_sasl and not c.use_tls:raise SystemExit("SASL PLAIN requires TLS")
 def main():
     c=Config.from_env();validate(c);stop=StopFlag()
     signal.signal(signal.SIGINT,stop.request);signal.signal(signal.SIGTERM,stop.request)
