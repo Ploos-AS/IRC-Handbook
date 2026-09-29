@@ -115,6 +115,10 @@ class ServerFeatures:
     def chanmodes(self):
         parsed=parse_chanmodes(self.values.get("CHANMODES","beI,k,l,imnst"))
         return parsed or ("beI","k","l","imnst")
+    @property
+    def chantypes(self):
+        value=self.values.get("CHANTYPES","#&")
+        return value if isinstance(value,str) and value else "#&"
 
 def is_numeric(m):
     return len(m.command)==3 and m.command.isdigit()
@@ -197,7 +201,19 @@ class ChannelState:
             if token:
                 member=self.add_member(token,modes);self.names_seen.add(self.key(member.nick))
     def configure(self,features):
+        old_members=list(self.members.values());old_seen=set(self.names_seen)
         self.casemapping=features.casemapping;self.prefix_modes="".join(features.prefix);self.chanmodes=features.chanmodes
+        rebuilt={}
+        for member in old_members:
+            key=self.key(member.nick)
+            if key in rebuilt:
+                rebuilt[key].modes.update(member.modes)
+            else:
+                rebuilt[key]=Member(member.nick,set(member.modes))
+        self.members=rebuilt
+        if self.names_active:
+            old_nicks={m.nick for m in old_members if any(irc_casefold(m.nick,x)==k for k in old_seen for x in ("ascii","rfc1459","strict-rfc1459"))}
+            self.names_seen={self.key(n) for n in old_nicks}
         self.lists={m:self.lists.get(m,set()) for m in self.chanmodes[0]}
     def remove_member(self,nick):self.members.pop(self.key(nick),None)
     def rename_member(self,old,new):
@@ -252,7 +268,7 @@ class ChannelRegistry:
         if m.command=="366" and len(m.params)>=2:self.get(m.params[1]).apply(m,self.features.prefix);return
         if m.command in {"JOIN","PART"} and m.params:self.get(m.params[0]).apply(m,self.features.prefix);return
         if m.command=="KICK" and m.params:self.get(m.params[0]).apply(m,self.features.prefix);return
-        if m.command=="MODE" and m.params and m.params[0] and m.params[0][0] in "#&+!":self.get(m.params[0]).apply(m,self.features.prefix);return
+        if m.command=="MODE" and m.params and m.params[0] and m.params[0][0] in self.features.chantypes:self.get(m.params[0]).apply(m,self.features.prefix);return
         if m.command in {"QUIT","NICK"}:
             for state in self.channels.values():state.apply(m,self.features.prefix)
 
