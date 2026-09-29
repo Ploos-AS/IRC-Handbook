@@ -1,5 +1,5 @@
 import socket,threading,time,unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain,iter_lines
+from irc_bot import AuthenticationError,Backoff,CapabilityState,assert_registry_invariants,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,channel_snapshot,CtcpMessage,Member,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,registry_snapshot,replay_transcript,response_for_line,sasl_authenticate_lines,sasl_plain,snapshot_diff,iter_lines
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -49,6 +49,19 @@ class BotTests(unittest.TestCase):
   with self.assertRaises(ValueError):parse_mode_changes("+o",[],"ov",("beI","k","l","imnst"))
  def test_mode_extra_parameter(self):
   with self.assertRaises(ValueError):parse_mode_changes("+i",["unused"],"ov",("beI","k","l","imnst"))
+ def test_transcript_replay_is_deterministic(self):
+  lines=[":s 005 bot CASEMAPPING=ascii PREFIX=(ov)@+ CHANMODES=beI,k,l,imnst :supported",
+   ":s 353 bot = #one :@Alice +Bob",":s 366 bot #one :End",":op!u@h MODE #one +o Bob",":Alice!u@h NICK Alicia"]
+  a=registry_snapshot(replay_transcript(lines));b=registry_snapshot(replay_transcript(lines))
+  self.assertEqual(a,b);self.assertEqual(a["#one"]["members"]["bob"]["modes"],["o","v"])
+ def test_snapshot_is_detached_from_mutable_state(self):
+  s=ChannelState("#c");s.add_member("Alice",{"o"});snap=channel_snapshot(s);s.members[s.key("Alice")].modes.add("v")
+  self.assertEqual(snap["members"][s.key("Alice")]["modes"],["o"])
+ def test_snapshot_diff_channels(self):
+  self.assertEqual(snapshot_diff({"#a":{"x":1}},{"#a":{"x":2},"#b":{}}),{"added":["#b"],"removed":[],"changed":["#a"]})
+ def test_registry_invariant_detects_bad_member_key(self):
+  r=ChannelRegistry(ServerFeatures());s=r.get("#c");s.members["wrong"]=Member("Alice",set())
+  with self.assertRaises(AssertionError):assert_registry_invariants(r)
  def test_names_generation_removes_stale_members(self):
   s=ChannelState("#c");s.add_member("Stale")
   s.apply(parse_message(":s 353 bot = #c :@Alice Bob"),{"o":"@","v":"+"})
