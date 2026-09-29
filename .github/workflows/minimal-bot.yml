@@ -2,23 +2,31 @@ name: Minimal IRC bot
 
 on:
   push:
+    branches:
+      - main
     paths:
-      - "examples/minimal-bot/**"
-      - ".github/workflows/minimal-bot.yml"
+      - 'examples/minimal-bot/**'
+      - '.github/workflows/minimal-bot.yml'
   pull_request:
     paths:
-      - "examples/minimal-bot/**"
-      - ".github/workflows/minimal-bot.yml"
+      - 'examples/minimal-bot/**'
+      - '.github/workflows/minimal-bot.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   test:
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version:
+          - '3.11'
+          - '3.12'
+          - '3.13'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,5 +38,5 @@ jobs:
       - name: Run unit, integration, transcript and property tests
         working-directory: examples/minimal-bot
         env:
-          PYTHONHASHSEED: "0"
-        run: python -m unittest discover -v -p "test*.py"
+          PYTHONHASHSEED: '0'
+        run: python -m unittest discover -v -p 'test*.py'
