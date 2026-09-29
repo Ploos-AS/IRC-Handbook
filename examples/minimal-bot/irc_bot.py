@@ -480,16 +480,8 @@ class Negotiation:
         return []
 
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False,case_mapping="rfc1459"):
-    use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
-    if m.command=="433":return [f"NICK {nick}_"]
     if m.command=="PING" and m.params:return ["PONG :"+m.params[-1]]
-    if use_sasl and m.command=="AUTHENTICATE" and m.params==["+"]:return sasl_authenticate_lines(sasl_user,sasl_password)
-    if use_sasl and m.command=="903":return ["CAP END"]
-    if use_sasl and m.command in {"904","905","906","907"}:
-        if sasl_required:raise AuthenticationError("SASL authentication failed")
-        return ["CAP END"]
-    if m.command=="001":return [f"JOIN {channel}"]
     ctcp=ctcp_reply(m,nick,case_mapping)
     if ctcp:return ctcp
     if m.command=="PRIVMSG" and len(m.params)>=2 and m.prefix:
