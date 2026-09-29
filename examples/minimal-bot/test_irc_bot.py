@@ -1,5 +1,5 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,ChannelState,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,CapabilityState,ChannelState,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -87,6 +87,24 @@ class BotTests(unittest.TestCase):
   self.assertEqual(response_for_line(":a!u@h NOTICE bot :\\x01VERSION x\\x01","bot","#c"),[])
  def test_ctcp_action_is_not_a_query(self):
   self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01ACTION waves\\x01","bot","#c"),[])
+ def test_capability_values(self):
+  self.assertEqual(parse_capabilities("sasl=PLAIN,EXTERNAL server-time account-tag"),{"sasl":"PLAIN,EXTERNAL","server-time":None,"account-tag":None})
+ def test_cap_ls_continuation(self):
+  s=CapabilityState()
+  s.apply(parse_message(":s CAP b LS * :multi-prefix sasl=PLAIN"))
+  self.assertEqual(s.available,{})
+  s.apply(parse_message(":s CAP b LS :server-time account-tag"))
+  self.assertEqual(s.available,{"multi-prefix":None,"sasl":"PLAIN","server-time":None,"account-tag":None})
+ def test_cap_new_del_ack(self):
+  s=CapabilityState()
+  s.apply(parse_message(":s CAP b NEW :echo-message=1 draft/test"))
+  s.apply(parse_message(":s CAP b ACK :echo-message draft/test"))
+  self.assertEqual(s.enabled,{"echo-message","draft/test"})
+  s.apply(parse_message(":s CAP b DEL :draft/test"))
+  self.assertNotIn("draft/test",s.available);self.assertNotIn("draft/test",s.enabled)
+ def test_message_metadata(self):
+  m=parse_message("@time=2026-09-29T10:00:00.000Z;account=alice;msgid=abc;batch=42 :a!u@h PRIVMSG #c :hi")
+  self.assertEqual(message_metadata(m),{"time":"2026-09-29T10:00:00.000Z","account":"alice","msgid":"abc","batch":"42"})
  def test_ping(self):self.assertEqual(response_for_line("PING :s","b","#c"),["PONG :s"])
  def test_433(self):self.assertEqual(response_for_line(":s 433 * b :used","b","#c"),["NICK b_"])
  def test_error(self):
