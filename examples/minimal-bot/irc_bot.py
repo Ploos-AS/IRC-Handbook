@@ -295,6 +295,22 @@ class ChannelRegistry:
         if m.command in {"QUIT","NICK"}:
             for state in self.channels.values():state.apply(m,self.features.prefix)
 
+@dataclass
+class SessionState:
+    initial_nick:str
+    features:ServerFeatures=field(default_factory=ServerFeatures)
+    channels:ChannelRegistry=field(init=False)
+    healthy:bool=False
+    def __post_init__(self):
+        self.channels=ChannelRegistry(self.features,self.initial_nick)
+    @property
+    def nick(self):return self.channels.own_nick
+    def apply(self,m):
+        if m.command=="001":self.healthy=True
+        if m.command=="005":
+            self.features.update(m);self.channels.reconfigure()
+        self.channels.apply(m)
+
 def channel_snapshot(state):
     return {"name":state.name,"casemapping":state.casemapping,
      "members":{k:{"nick":m.nick,"modes":sorted(m.modes)} for k,m in sorted(state.members.items())},
@@ -468,7 +484,7 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();channels=ChannelRegistry(features,c.nick);healthy=False
+    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);session=SessionState(c.nick)
     with connect(c) as sock:
         sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
@@ -477,19 +493,16 @@ def run_session(c,stop=None):
             print(f"<< {line}")
             try:m=parse_message(line)
             except ValueError:continue
-            if m.command=="001":healthy=True
-            if m.command=="005":
-                features.update(m);channels.reconfigure()
-            channels.apply(m)
+            session.apply(m)
             negotiated=negotiation.actions(m)
-            responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required,features.casemapping)
+            responses=negotiated if m.command=="CAP" else actions_for_message(m,session.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required,session.features.casemapping)
             for response in responses:
                 shown="AUTHENTICATE <redacted>" if response.startswith("AUTHENTICATE ") and response!="AUTHENTICATE PLAIN" else response
                 print(f">> {shown}");sock.sendall(encode_line(response))
         if stop.requested:
             try:sock.sendall(encode_line("QUIT :Shutting down"))
             except OSError:pass
-            return SessionResult(healthy,True)
+            return SessionResult(session.healthy,True)
         raise ConnectionClosed("IRC server closed the connection")
 def validate(c):
     if (c.sasl_user is None)!=(c.sasl_password is None):raise SystemExit("set both IRC_SASL_USER and IRC_SASL_PASSWORD")
