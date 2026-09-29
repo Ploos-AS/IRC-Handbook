@@ -26,6 +26,13 @@ class Fake:
     b=b""
     b=self.expect(c,b,"CAP LS 302")
     b=self.expect(c,b,"NICK handbookbot");b=self.expect(c,b,"USER handbookbot 0 * :IRC Handbook Bot")
+    if self.mode=="names":
+     c.sendall(b":s CAP handbookbot LS :server-time\r\n");b=self.expect(c,b,"CAP REQ :server-time")
+     c.sendall(b":s CAP handbookbot ACK :server-time\r\n");b=self.expect(c,b,"CAP END")
+     c.sendall(b":s 005 handbookbot CASEMAPPING=ascii PREFIX=(ohv)@%+ CHANMODES=beI,k,l,imnst :supported\r\n")
+     c.sendall(b":s 001 handbookbot :Welcome\r\n");b=self.expect(c,b,"JOIN #handbook-test")
+     c.sendall(b":s 353 handbookbot = #handbook-test :@Alice %+Bob Plain\r\n:s 366 handbookbot #handbook-test :End\r\n")
+     c.sendall(b":op!u@h MODE #handbook-test +o Bob\r\n");return
     if self.mode=="plain":
      c.sendall(b":s CAP handbookbot LS :server-time\r\n");b=self.expect(c,b,"CAP REQ :server-time")
      c.sendall(b":s CAP handbookbot ACK :server-time\r\n");b=self.expect(c,b,"CAP END")
@@ -50,6 +57,10 @@ class IntegrationTests(unittest.TestCase):
  def cfg(self,s,required=False,sasl=False):return Config(s.host,s.port,"handbookbot","#handbook-test",False,"acct" if sasl else None,"secret" if sasl else None,required)
  def run_ok(self,mode,**kw):
   s=Fake(mode);s.start();run_session(self.cfg(s,**kw));s.join()
+ def test_names_transcript_reaches_live_runtime(self):
+  s=Fake("names");s.start()
+  with self.assertRaises(ConnectionClosed):run_session(self.cfg(s))
+  s.join()
  def test_plain_eof_is_explicit_disconnect(self):
   s=Fake("plain");s.start()
   with self.assertRaises(ConnectionClosed):run_session(self.cfg(s))
