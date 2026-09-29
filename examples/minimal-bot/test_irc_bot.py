@@ -337,6 +337,19 @@ class BotTests(unittest.TestCase):
   r=Registration("Bot","#c");r.start()
   self.assertEqual(r.actions(parse_message(":s 433 * Bot :in use"),"Bot"),["NICK Bot_"])
   self.assertEqual(r.phase,"registering")
+ def test_registration_late_cap_cannot_duplicate_join(self):
+  r=Registration("Bot","#c");r.start()
+  self.assertEqual(r.actions(parse_message(":s 001 Bot :welcome"),"Bot"),["JOIN #c"])
+  self.assertEqual(r.actions(parse_message(":s CAP Bot ACK :server-time"),"Bot"),["CAP END"])
+  self.assertEqual(r.actions(parse_message(":s 001 Bot :welcome"),"Bot"),[])
+ def test_registration_sasl_result_without_credentials_is_inert(self):
+  r=Registration("Bot","#c");r.start()
+  self.assertEqual(r.actions(parse_message(":s 903 Bot :ok"),"Bot"),["CAP END"])
+  self.assertEqual(r.phase,"registering")
+ def test_registration_ping_does_not_change_phase(self):
+  r=Registration("Bot","#c");r.start();phase=r.phase
+  self.assertEqual(r.actions(parse_message("PING :token"),"Bot"),["PONG :token"])
+  self.assertEqual(r.phase,phase)
  def test_session_state_is_fresh_per_connection(self):
   first=SessionState("Bot");first.apply(parse_message(":s 001 Bot :welcome"))
   first.apply(parse_message(":Bot!u@h JOIN #old"));first.apply(parse_message(":Bot!u@h NICK Changed"))
