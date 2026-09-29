@@ -180,17 +180,19 @@ class ChannelState:
     def __init__(self,name,casemapping="rfc1459",prefix_modes="ov",chanmodes=("beI","k","l","imnst")):
         self.name=name;self.casemapping=casemapping;self.prefix_modes=prefix_modes;self.chanmodes=chanmodes
         self.members={};self.modes=set();self.mode_values={};self.lists={m:set() for m in chanmodes[0]}
-        self.names_active=False;self.names_seen=set()
+        self.names_active=False;self.names_seen=set();self.names_pending={};self.names_events=[]
     def key(self,nick):return irc_casefold(nick,self.casemapping)
     def add_member(self,nick,modes=()):
         member=self.members.setdefault(self.key(nick),Member(nick,set()));member.modes.update(modes);return member
     def begin_names(self):
-        if not self.names_active:self.names_active=True;self.names_seen=set()
+        if not self.names_active:
+            self.names_active=True;self.names_seen=set();self.names_pending={};self.names_events=[]
     def end_names(self):
         if self.names_active:
-            for key in list(self.members):
-                if key not in self.names_seen:self.members.pop(key,None)
-            self.names_active=False;self.names_seen=set()
+            self.members={k:Member(v.nick,set(v.modes)) for k,v in self.names_pending.items()}
+            events=self.names_events
+            self.names_active=False;self.names_seen=set();self.names_pending={};self.names_events=[]
+            for event,prefix_map in events:self.apply(event,prefix_map)
     def add_names(self,text,prefix_map=None):
         self.begin_names()
         prefix_map=prefix_map or {m:p for m,p in zip(self.prefix_modes,"@+"[:len(self.prefix_modes)])}
@@ -199,7 +201,7 @@ class ChannelState:
             modes=set()
             while token and token[0] in by_prefix:modes.add(by_prefix[token[0]]);token=token[1:]
             if token:
-                member=self.add_member(token,modes);self.names_seen.add(self.key(member.nick))
+                key=self.key(token);member=self.names_pending.setdefault(key,Member(token,set()));member.modes.update(modes);self.names_seen.add(key)
     def configure(self,features):
         old_members=list(self.members.values());old_seen=set(self.names_seen)
         self.casemapping=features.casemapping;self.prefix_modes="".join(features.prefix);self.chanmodes=features.chanmodes
@@ -212,8 +214,13 @@ class ChannelState:
                 rebuilt[key]=Member(member.nick,set(member.modes))
         self.members=rebuilt
         if self.names_active:
-            old_nicks={m.nick for m in old_members if any(irc_casefold(m.nick,x)==k for k in old_seen for x in ("ascii","rfc1459","strict-rfc1459"))}
-            self.names_seen={self.key(n) for n in old_nicks}
+            pending=list(self.names_pending.values())
+            self.names_pending={}
+            for member in pending:
+                key=self.key(member.nick)
+                if key in self.names_pending:self.names_pending[key].modes.update(member.modes)
+                else:self.names_pending[key]=Member(member.nick,set(member.modes))
+            self.names_seen=set(self.names_pending)
         self.lists={m:self.lists.get(m,set()) for m in self.chanmodes[0]}
     def remove_member(self,nick):self.members.pop(self.key(nick),None)
     def rename_member(self,old,new):
@@ -240,9 +247,10 @@ class ChannelState:
         if m.command=="353" and len(m.params)>=4 and irc_equal(m.params[2],self.name,self.casemapping):
             self.add_names(m.params[3],prefix_map);return
         if m.command=="366" and len(m.params)>=2 and irc_equal(m.params[1],self.name,self.casemapping):self.end_names();return
+        if self.names_active and m.command not in {"353","366"}:
+            self.names_events.append((m,prefix_map));return
         if m.command=="JOIN" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):
             self.add_member(sender)
-            if self.names_active:self.names_seen.add(self.key(sender))
         elif m.command=="PART" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(sender)
         elif m.command=="KICK" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(m.params[1])
         elif m.command=="QUIT" and sender:self.remove_member(sender)
