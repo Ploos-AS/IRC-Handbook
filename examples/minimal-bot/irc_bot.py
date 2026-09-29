@@ -167,7 +167,18 @@ class ChannelState:
         self.name=name;self.casemapping=casemapping;self.prefix_modes=prefix_modes;self.chanmodes=chanmodes
         self.members={};self.modes=set();self.mode_values={};self.lists={m:set() for m in chanmodes[0]}
     def key(self,nick):return irc_casefold(nick,self.casemapping)
-    def add_member(self,nick):self.members.setdefault(self.key(nick),Member(nick,set()))
+    def add_member(self,nick,modes=()):
+        member=self.members.setdefault(self.key(nick),Member(nick,set()));member.modes.update(modes);return member
+    def add_names(self,text,prefix_map=None):
+        prefix_map=prefix_map or {m:p for m,p in zip(self.prefix_modes,"@+"[:len(self.prefix_modes)])}
+        by_prefix={p:m for m,p in prefix_map.items()}
+        for token in text.split():
+            modes=set()
+            while token and token[0] in by_prefix:modes.add(by_prefix[token[0]]);token=token[1:]
+            if token:self.add_member(token,modes)
+    def configure(self,features):
+        self.casemapping=features.casemapping;self.prefix_modes="".join(features.prefix);self.chanmodes=features.chanmodes
+        self.lists={m:self.lists.get(m,set()) for m in self.chanmodes[0]}
     def remove_member(self,nick):self.members.pop(self.key(nick),None)
     def rename_member(self,old,new):
         member=self.members.pop(self.key(old),None)
@@ -188,8 +199,11 @@ class ChannelState:
                     self.modes.discard(change.mode);self.mode_values.pop(change.mode,None)
             else:
                 (self.modes.add if change.adding else self.modes.discard)(change.mode)
-    def apply(self,m):
+    def apply(self,m,prefix_map=None):
         sender=m.prefix.split("!",1)[0] if m.prefix else None
+        if m.command=="353" and len(m.params)>=4 and irc_equal(m.params[2],self.name,self.casemapping):
+            self.add_names(m.params[3],prefix_map);return
+        if m.command=="366" and len(m.params)>=2 and irc_equal(m.params[1],self.name,self.casemapping):return
         if m.command=="JOIN" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.add_member(sender)
         elif m.command=="PART" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(sender)
         elif m.command=="KICK" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(m.params[1])
@@ -333,7 +347,7 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();healthy=False
+    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();channel_state=ChannelState(c.channel);healthy=False
     with connect(c) as sock:
         sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
@@ -343,7 +357,9 @@ def run_session(c,stop=None):
             try:m=parse_message(line)
             except ValueError:continue
             if m.command=="001":healthy=True
-            if m.command=="005":features.update(m)
+            if m.command=="005":
+                features.update(m);channel_state.configure(features)
+            channel_state.apply(m,features.prefix)
             negotiated=negotiation.actions(m)
             responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required,features.casemapping)
             for response in responses:
