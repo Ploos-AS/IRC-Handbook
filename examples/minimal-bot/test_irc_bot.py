@@ -1,5 +1,5 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,ServerError,StopFlag,encode_line,is_numeric,parse_isupport,parse_message,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,ServerError,StopFlag,encode_line,irc_casefold,irc_equal,is_numeric,parse_chanmodes,parse_isupport,parse_message,parse_prefix,response_for_line,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -19,6 +19,23 @@ class BotTests(unittest.TestCase):
  def test_isupport_boolean_and_removed(self):
   m=parse_message(":s 005 b SAFELIST -WHOX :are supported")
   self.assertEqual(parse_isupport(m),{"SAFELIST":True,"WHOX":False})
+ def test_prefix(self):
+  self.assertEqual(parse_prefix("(qaohv)~&@%+"),{"q":"~","a":"&","o":"@","h":"%","v":"+"})
+  self.assertEqual(parse_prefix("(ov)@"),{})
+ def test_chanmodes(self):
+  self.assertEqual(parse_chanmodes("beI,k,l,imnst"),("beI","k","l","imnst"))
+  self.assertEqual(parse_chanmodes("broken"),())
+ def test_casemapping_ascii(self):
+  self.assertTrue(irc_equal("Nick","NICK","ascii"))
+  self.assertFalse(irc_equal("[","{","ascii"))
+ def test_casemapping_rfc1459(self):
+  self.assertTrue(irc_equal("[Nick]","{nick}","rfc1459"))
+  self.assertTrue(irc_equal("^","~","rfc1459"))
+ def test_casemapping_strict(self):
+  self.assertTrue(irc_equal("[","{","strict-rfc1459"))
+  self.assertFalse(irc_equal("^","~","strict-rfc1459"))
+ def test_private_target_uses_irc_casefold(self):
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG {BOT} :!hello","[bot]","#c"),["PRIVMSG a :Hello, a!"])
  def test_ping(self):self.assertEqual(response_for_line("PING :s","b","#c"),["PONG :s"])
  def test_433(self):self.assertEqual(response_for_line(":s 433 * b :used","b","#c"),["NICK b_"])
  def test_error(self):
