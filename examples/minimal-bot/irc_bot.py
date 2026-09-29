@@ -306,7 +306,9 @@ class SessionState:
     @property
     def nick(self):return self.channels.own_nick
     def apply(self,m):
-        if m.command=="001":self.healthy=True
+        if m.command=="001":
+            self.healthy=True
+            if m.params:self.channels.own_nick=m.params[0]
         if m.command=="005":
             self.features.update(m);self.channels.reconfigure()
         self.channels.apply(m)
