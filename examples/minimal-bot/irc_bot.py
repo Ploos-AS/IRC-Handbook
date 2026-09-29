@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Minimal educational IRC bot using only the Python standard library."""
 from __future__ import annotations
-import base64, os, signal, socket, ssl, time
+import base64, os, random, signal, socket, ssl, time
 from dataclasses import dataclass, field
 
 class SessionError(Exception): pass
@@ -267,6 +267,19 @@ def assert_registry_invariants(registry):
             if member_key!=state.key(member.nick):raise AssertionError("member key mismatch")
             if not member.modes.issubset(set(state.prefix_modes)):raise AssertionError("unknown member prefix mode")
     return True
+
+def mutate_transcript(lines,seed=0,rounds=32):
+    """Yield deterministic parser/state mutations suitable for repeatable fuzz tests."""
+    rng=random.Random(seed);base=list(lines)
+    for _ in range(rounds):
+        candidate=base.copy()
+        if candidate:
+            op=rng.randrange(4);i=rng.randrange(len(candidate))
+            if op==0:candidate[i]=candidate[i].swapcase()
+            elif op==1:candidate.insert(i,candidate[i])
+            elif op==2:candidate[i]=candidate[i]+" "
+            else:candidate[i]=candidate[i].replace("Alice","ALICE")
+        yield candidate
 
 def replay_transcript(lines,features=None,check_invariants=True):
     features=features or ServerFeatures();registry=ChannelRegistry(features)
