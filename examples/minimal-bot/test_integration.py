@@ -1,5 +1,5 @@
 import socket,threading,unittest
-from irc_bot import AuthenticationError,Config,ServerError,run_session,sasl_plain
+from irc_bot import AuthenticationError,Config,ServerError,run_session,sasl_plain,validate
 def recv_line(c,b=b""):
  while b"\n" not in b:
   x=c.recv(4096)
@@ -24,8 +24,12 @@ class Fake:
    c,_=self.listener.accept();c.settimeout(3)
    with c:
     b=b""
-    if self.mode!="plain":b=self.expect(c,b,"CAP LS 302")
+    b=self.expect(c,b,"CAP LS 302")
     b=self.expect(c,b,"NICK handbookbot");b=self.expect(c,b,"USER handbookbot 0 * :IRC Handbook Bot")
+    if self.mode=="plain":
+     c.sendall(b":s CAP handbookbot LS :server-time\r\n");b=self.expect(c,b,"CAP REQ :server-time")
+     c.sendall(b":s CAP handbookbot ACK :server-time\r\n");b=self.expect(c,b,"CAP END")
+     c.sendall(b":s 001 handbookbot :Welcome\r\n");b=self.expect(c,b,"JOIN #handbook-test");return
     if self.mode=="nick":
      c.sendall(b":s 433 * handbookbot :in use\r\n");b=self.expect(c,b,"NICK handbookbot_");return
     if self.mode=="error":c.sendall(b"ERROR :maintenance\r\n");return
@@ -43,6 +47,9 @@ class IntegrationTests(unittest.TestCase):
  def run_ok(self,mode,**kw):
   s=Fake(mode);s.start();run_session(self.cfg(s,**kw));s.join()
  def test_plain(self):self.run_ok("plain")
+ def test_sasl_plain_requires_tls(self):
+  c=Config("localhost",6697,"bot","#c",False,"acct","secret",True)
+  with self.assertRaises(SystemExit):validate(c)
  def test_nick_collision(self):self.run_ok("nick")
  def test_server_error(self):
   s=Fake("error");s.start()
