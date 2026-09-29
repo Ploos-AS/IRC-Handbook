@@ -1,5 +1,5 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,ModeChange,ServerError,StopFlag,encode_line,irc_casefold,irc_equal,is_numeric,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,ChannelState,ModeChange,ServerError,StopFlag,encode_line,irc_casefold,irc_equal,is_numeric,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -38,6 +38,26 @@ class BotTests(unittest.TestCase):
   with self.assertRaises(ValueError):parse_mode_changes("+o",[],"ov",("beI","k","l","imnst"))
  def test_mode_extra_parameter(self):
   with self.assertRaises(ValueError):parse_mode_changes("+i",["unused"],"ov",("beI","k","l","imnst"))
+ def test_channel_state_lifecycle_and_modes(self):
+  s=ChannelState("#Retro")
+  for line in [":Alice!u@h JOIN #retro",":Bob!u@h JOIN #retro",":op!u@h MODE #retro +ov Alice Bob"]:
+   s.apply(parse_message(line))
+  self.assertEqual(s.members[s.key("alice")].modes,{"o"})
+  self.assertEqual(s.members[s.key("BOB")].modes,{"v"})
+  s.apply(parse_message(":Bob!u@h NICK Robert"))
+  self.assertNotIn(s.key("Bob"),s.members);self.assertEqual(s.members[s.key("robert")].modes,{"v"})
+  s.apply(parse_message(":op!u@h KICK #retro Robert :bye"))
+  self.assertNotIn(s.key("Robert"),s.members)
+ def test_channel_state_part_and_quit(self):
+  s=ChannelState("#c")
+  for line in [":a!u@h JOIN #c",":b!u@h JOIN #c",":a!u@h PART #c :bye",":b!u@h QUIT :gone"]:s.apply(parse_message(line))
+  self.assertEqual(s.members,{})
+ def test_channel_state_values_lists_flags(self):
+  s=ChannelState("#c")
+  s.apply(parse_message(":op MODE #c +klib secret 25 *!*@bad"))
+  self.assertEqual(s.mode_values,{"k":"secret","l":"25"});self.assertIn("i",s.modes);self.assertEqual(s.lists["b"],{"*!*@bad"})
+  s.apply(parse_message(":op MODE #c -k-l-b secret *!*@bad"))
+  self.assertEqual(s.mode_values,{});self.assertEqual(s.lists["b"],set())
  def test_casemapping_ascii(self):
   self.assertTrue(irc_equal("Nick","NICK","ascii"))
   self.assertFalse(irc_equal("[","{","ascii"))
