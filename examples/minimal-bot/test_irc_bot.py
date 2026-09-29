@@ -5,13 +5,17 @@ class BotTests(unittest.TestCase):
  def test_rejects_injection(self):
   with self.assertRaises(ValueError):encode_line("X\r\nOPER bad")
  def test_tag_unescape_is_single_pass(self):
-  self.assertEqual(parse_message("@x=one\\\\stwo\\:three\\q :s CMD").tags["x"],"one\\stwo;threeq")
+  wire="@x=one"+chr(92)+chr(92)+"stwo"+chr(92)+":three"+chr(92)+"q :s CMD"
+  self.assertEqual(parse_message(wire).tags["x"],"one"+chr(92)+"stwo;threeq")
  def test_tag_unescape_does_not_decode_generated_escape(self):
-  self.assertEqual(parse_message("@x=\\\\s CMD").tags["x"],r"\s")
+  wire="@x="+chr(92)+chr(92)+"s CMD"
+  self.assertEqual(parse_message(wire).tags["x"],chr(92)+"s")
  def test_tag_unescape_unknown_escape_drops_only_backslash(self):
-  self.assertEqual(parse_message(r"@x=a\qb CMD").tags["x"],"aqb")
+  wire="@x=a"+chr(92)+"qb CMD"
+  self.assertEqual(parse_message(wire).tags["x"],"aqb")
  def test_tag_unescape_trailing_backslash_is_dropped(self):
-  self.assertEqual(parse_message("@x=value\\\\ CMD").tags["x"],"value\\")
+  wire="@x=value"+chr(92)+" CMD"
+  self.assertEqual(parse_message(wire).tags["x"],"value")
  def test_parser(self):
   m=parse_message("@time=x;flag :n!u@h PRIVMSG #c :hello world")
   self.assertEqual((m.tags,m.prefix,m.command,m.params),({"time":"x","flag":None},"n!u@h","PRIVMSG",["#c","hello world"]))
@@ -174,23 +178,29 @@ class BotTests(unittest.TestCase):
   self.assertEqual(actions_for_message(m,"[bot]","#c",case_mapping="ascii"),["PRIVMSG {BOT} :Hello, a!"])
   self.assertEqual(actions_for_message(m,"[bot]","#c",case_mapping="rfc1459"),["PRIVMSG a :Hello, a!"])
  def test_ctcp_parse_and_frame(self):
-  self.assertEqual(parse_ctcp("\x01ACTION waves\x01"),CtcpMessage("ACTION","waves"))
-  self.assertEqual(ctcp_frame("PING","123"),"\x01PING 123\x01")
+  d=chr(1)
+  self.assertEqual(parse_ctcp(d+"ACTION waves"+d),CtcpMessage("ACTION","waves"))
+  self.assertEqual(ctcp_frame("PING","123"),d+"PING 123"+d)
   self.assertIsNone(parse_ctcp("ordinary text"))
  def test_ctcp_direct_version(self):
-  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01VERSION\x01","bot","#c"),
-   ["NOTICE a :\\x01VERSION IRC Handbook educational bot\x01"])
+  d=chr(1)
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :"+d+"VERSION"+d,"bot","#c"),
+   ["NOTICE a :"+d+"VERSION IRC Handbook educational bot"+d])
  def test_ctcp_ping_echoes_opaque_argument(self):
-  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01PING 123 456\x01","bot","#c"),
-   ["NOTICE a :\\x01PING 123 456\x01"])
+  d=chr(1)
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :"+d+"PING 123 456"+d,"bot","#c"),
+   ["NOTICE a :"+d+"PING 123 456"+d])
  def test_ctcp_time_does_not_expose_clock(self):
-  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01TIME\x01","bot","#c"),
-   ["NOTICE a :\\x01TIME not exposed by educational bot\x01"])
+  d=chr(1)
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :"+d+"TIME"+d,"bot","#c"),
+   ["NOTICE a :"+d+"TIME not exposed by educational bot"+d])
  def test_ctcp_no_channel_or_notice_reply(self):
-  self.assertEqual(response_for_line(":a!u@h PRIVMSG #c :\\x01VERSION\x01","bot","#c"),[])
-  self.assertEqual(response_for_line(":a!u@h NOTICE bot :\\x01VERSION x\x01","bot","#c"),[])
+  d=chr(1)
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG #c :"+d+"VERSION"+d,"bot","#c"),[])
+  self.assertEqual(response_for_line(":a!u@h NOTICE bot :"+d+"VERSION x"+d,"bot","#c"),[])
  def test_ctcp_action_is_not_a_query(self):
-  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :\\x01ACTION waves\x01","bot","#c"),[])
+  d=chr(1)
+  self.assertEqual(response_for_line(":a!u@h PRIVMSG bot :"+d+"ACTION waves"+d,"bot","#c"),[])
  def test_capability_values(self):
   self.assertEqual(parse_capabilities("sasl=PLAIN,EXTERNAL server-time account-tag"),{"sasl":"PLAIN,EXTERNAL","server-time":None,"account-tag":None})
  def test_cap_ls_continuation(self):
