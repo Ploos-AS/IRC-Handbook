@@ -104,6 +104,27 @@ def irc_casefold(value,mapping="rfc1459"):
 
 def irc_equal(a,b,mapping="rfc1459"):
     return irc_casefold(a,mapping)==irc_casefold(b,mapping)
+
+@dataclass(frozen=True)
+class ModeChange:
+    adding:bool; mode:str; parameter:str|None=None
+
+def parse_mode_changes(mode_string,parameters=(),prefix_modes="",chanmodes=()):
+    """Parse a MODE string using PREFIX modes and CHANMODES parameter rules."""
+    groups=chanmodes if len(chanmodes)==4 else ("","","","")
+    always=set(groups[0]+groups[1]+prefix_modes)
+    set_only=set(groups[2])
+    params=iter(parameters); adding=True; out=[]
+    for ch in mode_string:
+        if ch=="+":adding=True;continue
+        if ch=="-":adding=False;continue
+        needs_param=ch in always or (adding and ch in set_only)
+        parameter=next(params,None) if needs_param else None
+        if needs_param and parameter is None:raise ValueError(f"MODE {ch} requires a parameter")
+        out.append(ModeChange(adding,ch,parameter))
+    try:next(params)
+    except StopIteration:return out
+    raise ValueError("unused MODE parameters")
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
