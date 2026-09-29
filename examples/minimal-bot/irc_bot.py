@@ -422,6 +422,38 @@ def message_metadata(m):
 
 DESIRED_CAPS=("server-time","account-tag","message-tags")
 
+class Registration:
+    """Explicit registration phases for one IRC connection."""
+    def __init__(self,nick,channel,use_sasl=False,sasl_required=False):
+        self.requested_nick=nick;self.channel=channel
+        self.negotiation=Negotiation(use_sasl,sasl_required)
+        self.phase="new";self.join_sent=False
+    def start(self):
+        if self.phase!="new":return []
+        self.phase="cap";return ["CAP LS 302",f"NICK {self.requested_nick}",f"USER {self.requested_nick} 0 * :IRC Handbook Bot"]
+    def actions(self,m,current_nick,sasl_user=None,sasl_password=None,case_mapping="rfc1459"):
+        if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
+        if m.command=="PING" and m.params:return ["PONG :"+m.params[-1]]
+        if m.command=="433":
+            self.phase="registering";return [f"NICK {current_nick}_"]
+        if m.command=="CAP":
+            out=self.negotiation.actions(m)
+            if any(x=="AUTHENTICATE PLAIN" for x in out):self.phase="sasl"
+            elif any(x=="CAP END" for x in out):self.phase="registering"
+            return out
+        if m.command=="AUTHENTICATE" and m.params==["+"] and sasl_user is not None and sasl_password is not None:
+            self.phase="sasl";return sasl_authenticate_lines(sasl_user,sasl_password)
+        if m.command=="903":
+            self.phase="registering";return ["CAP END"]
+        if m.command in {"904","905","906","907"} and sasl_user is not None:
+            if self.negotiation.sasl_required:raise AuthenticationError("SASL authentication failed")
+            self.phase="registering";return ["CAP END"]
+        if m.command=="001":
+            self.phase="registered"
+            if not self.join_sent:
+                self.join_sent=True;return [f"JOIN {self.channel}"]
+        return []
+
 class Negotiation:
     """Stateful CAP negotiation for one connection."""
     def __init__(self,use_sasl=False,sasl_required=False):
@@ -486,18 +518,17 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);session=SessionState(c.nick)
+    stop=stop or StopFlag();registration=Registration(c.nick,c.channel,c.use_sasl,c.sasl_required);session=SessionState(c.nick)
     with connect(c) as sock:
-        sock.sendall(encode_line("CAP LS 302"))
-        sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
+        for line in registration.start():sock.sendall(encode_line(line))
         for line in iter_lines(sock,stop):
             if stop.requested:break
             print(f"<< {line}")
             try:m=parse_message(line)
             except ValueError:continue
             session.apply(m)
-            negotiated=negotiation.actions(m)
-            responses=negotiated if m.command=="CAP" else actions_for_message(m,session.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required,session.features.casemapping)
+            registration_responses=registration.actions(m,session.nick,c.sasl_user,c.sasl_password,session.features.casemapping)
+            responses=registration_responses or actions_for_message(m,session.nick,c.channel,None,None,False,session.features.casemapping)
             for response in responses:
                 shown="AUTHENTICATE <redacted>" if response.startswith("AUTHENTICATE ") and response!="AUTHENTICATE PLAIN" else response
                 print(f">> {shown}");sock.sendall(encode_line(response))
