@@ -293,10 +293,12 @@ def response_for_line(line,nick,channel,sasl_user=None,sasl_password=None,sasl_r
     try:m=parse_message(line)
     except ValueError:return []
     return actions_for_message(m,nick,channel,sasl_user,sasl_password,sasl_required)
-def iter_lines(sock):
-    buf=b""
-    while True:
-        chunk=sock.recv(4096)
+def iter_lines(sock,stop=None,poll_timeout=.5):
+    """Yield IRC lines while periodically returning control for shutdown checks."""
+    buf=b"";sock.settimeout(poll_timeout)
+    while not (stop and stop.requested):
+        try:chunk=sock.recv(4096)
+        except socket.timeout:continue
         if not chunk:return
         buf+=chunk
         while b"\n" in buf:
@@ -309,9 +311,8 @@ def run_session(c,stop=None):
     with connect(c) as sock:
         sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
-        for line in iter_lines(sock):
-            if stop.requested:
-                sock.sendall(encode_line("QUIT :Shutting down"));return
+        for line in iter_lines(sock,stop):
+            if stop.requested:break
             print(f"<< {line}")
             try:m=parse_message(line)
             except ValueError:continue
@@ -320,6 +321,9 @@ def run_session(c,stop=None):
             for response in responses:
                 shown="AUTHENTICATE <redacted>" if response.startswith("AUTHENTICATE ") and response!="AUTHENTICATE PLAIN" else response
                 print(f">> {shown}");sock.sendall(encode_line(response))
+        if stop.requested:
+            try:sock.sendall(encode_line("QUIT :Shutting down"))
+            except OSError:pass
 def validate(c):
     if (c.sasl_user is None)!=(c.sasl_password is None):raise SystemExit("set both IRC_SASL_USER and IRC_SASL_PASSWORD")
     if c.sasl_required and not c.use_sasl:raise SystemExit("IRC_SASL_REQUIRED needs SASL credentials")
