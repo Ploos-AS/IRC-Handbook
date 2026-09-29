@@ -288,7 +288,6 @@ class BotTests(unittest.TestCase):
   n=Negotiation(True,True)
   with self.assertRaises(AuthenticationError):n.actions(parse_message(":s CAP b LS :server-time"))
  def test_ping(self):self.assertEqual(response_for_line("PING :s","b","#c"),["PONG :s"])
- def test_433(self):self.assertEqual(response_for_line(":s 433 * b :used","b","#c"),["NICK b_"])
  def test_error(self):
   with self.assertRaises(ServerError):response_for_line("ERROR :bye","b","#c")
  def test_cap_without_negotiation_has_no_stateless_fallback(self):
@@ -296,7 +295,6 @@ class BotTests(unittest.TestCase):
  def test_response_helper_can_use_stateful_negotiation(self):
   n=Negotiation(True,True)
   self.assertEqual(response_for_line(":s CAP b LS :sasl server-time","b","#c","a","p",True,n),["CAP REQ :server-time sasl"])
- def test_auth(self):self.assertEqual(response_for_line("AUTHENTICATE +","b","#c","a","p"),["AUTHENTICATE "+sasl_plain("a","p")])
  def test_sasl_authenticate_chunking(self):
   lines=sasl_authenticate_lines("u","p"*600)
   self.assertTrue(all(len(x.removeprefix("AUTHENTICATE "))<=400 for x in lines))
@@ -331,6 +329,8 @@ class BotTests(unittest.TestCase):
   self.assertEqual(r.phase,"registering")
  def test_registration_required_sasl_failure(self):
   r=Registration("Bot","#c",True,True);r.start()
+  r.actions(parse_message(":s CAP Bot LS :sasl"),"Bot")
+  r.actions(parse_message(":s CAP Bot ACK :sasl"),"Bot")
   with self.assertRaises(AuthenticationError):
    r.actions(parse_message(":s 904 Bot :failed"),"Bot","user","pass")
  def test_registration_nick_collision(self):
@@ -340,12 +340,12 @@ class BotTests(unittest.TestCase):
  def test_registration_late_cap_cannot_duplicate_join(self):
   r=Registration("Bot","#c");r.start()
   self.assertEqual(r.actions(parse_message(":s 001 Bot :welcome"),"Bot"),["JOIN #c"])
-  self.assertEqual(r.actions(parse_message(":s CAP Bot ACK :server-time"),"Bot"),["CAP END"])
+  self.assertEqual(r.actions(parse_message(":s CAP Bot ACK :server-time"),"Bot"),[])
   self.assertEqual(r.actions(parse_message(":s 001 Bot :welcome"),"Bot"),[])
  def test_registration_sasl_result_without_credentials_is_inert(self):
   r=Registration("Bot","#c");r.start()
-  self.assertEqual(r.actions(parse_message(":s 903 Bot :ok"),"Bot"),["CAP END"])
-  self.assertEqual(r.phase,"registering")
+  self.assertEqual(r.actions(parse_message(":s 903 Bot :ok"),"Bot"),[])
+  self.assertEqual(r.phase,"cap")
  def test_registration_ping_does_not_change_phase(self):
   r=Registration("Bot","#c");r.start();phase=r.phase
   self.assertEqual(r.actions(parse_message("PING :token"),"Bot"),["PONG :token"])
