@@ -2,7 +2,7 @@
 """Minimal educational IRC bot using only the Python standard library."""
 from __future__ import annotations
 import base64, os, signal, socket, ssl, time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 class SessionError(Exception): pass
 class AuthenticationError(SessionError): pass
@@ -85,6 +85,26 @@ def parse_isupport(m):
             key,eq,value=token.partition("=")
             out[key]=value if eq else True
     return out
+
+@dataclass
+class ServerFeatures:
+    values:dict[str,str|bool]=field(default_factory=dict)
+    def update(self,m):
+        for key,value in parse_isupport(m).items():
+            if value is False:self.values.pop(key,None)
+            else:self.values[key]=value
+    @property
+    def casemapping(self):
+        value=self.values.get("CASEMAPPING","rfc1459")
+        return value if value in {"ascii","rfc1459","strict-rfc1459"} else "rfc1459"
+    @property
+    def prefix(self):
+        parsed=parse_prefix(self.values.get("PREFIX","(ov)@+"))
+        return parsed or {"o":"@","v":"+"}
+    @property
+    def chanmodes(self):
+        parsed=parse_chanmodes(self.values.get("CHANMODES","beI,k,l,imnst"))
+        return parsed or ("beI","k","l","imnst")
 
 def is_numeric(m):
     return len(m.command)==3 and m.command.isdigit()
@@ -197,9 +217,9 @@ def ctcp_frame(command,argument=None):
     if argument is not None and ("\\r" in argument or "\\n" in argument or CTCP_DELIM in argument):raise ValueError("invalid CTCP argument")
     return CTCP_DELIM+command+((" "+argument) if argument is not None else "")+CTCP_DELIM
 
-def ctcp_reply(m,nick):
+def ctcp_reply(m,nick,case_mapping="rfc1459"):
     """Reply only to direct PRIVMSG CTCP queries; never reply to NOTICE or channel CTCP."""
-    if m.command!="PRIVMSG" or len(m.params)<2 or not m.prefix or not irc_equal(m.params[0],nick):return []
+    if m.command!="PRIVMSG" or len(m.params)<2 or not m.prefix or not irc_equal(m.params[0],nick,case_mapping):return []
     request=parse_ctcp(m.params[1])
     if not request or request.command=="ACTION":return []
     sender=m.prefix.split("!",1)[0]
@@ -267,7 +287,7 @@ class Negotiation:
             return ["CAP END"]
         return []
 
-def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
+def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False,case_mapping="rfc1459"):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
     if m.command=="433":return [f"NICK {nick}_"]
@@ -288,12 +308,12 @@ def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_re
         if sasl_required:raise AuthenticationError("SASL authentication failed")
         return ["CAP END"]
     if m.command=="001":return [f"JOIN {channel}"]
-    ctcp=ctcp_reply(m,nick)
+    ctcp=ctcp_reply(m,nick,case_mapping)
     if ctcp:return ctcp
     if m.command=="PRIVMSG" and len(m.params)>=2 and m.prefix:
         sender=m.prefix.split("!",1)[0];target,text=m.params[0],m.params[1]
         if parse_ctcp(text):return []
-        if text.strip()=="!hello":return [f"PRIVMSG {sender if irc_equal(target,nick) else target} :Hello, {sender}!"]
+        if text.strip()=="!hello":return [f"PRIVMSG {sender if irc_equal(target,nick,case_mapping) else target} :Hello, {sender}!"]
     return []
 def response_for_line(line,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     try:m=parse_message(line)
@@ -313,7 +333,7 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);healthy=False
+    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();healthy=False
     with connect(c) as sock:
         sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
@@ -323,8 +343,9 @@ def run_session(c,stop=None):
             try:m=parse_message(line)
             except ValueError:continue
             if m.command=="001":healthy=True
+            if m.command=="005":features.update(m)
             negotiated=negotiation.actions(m)
-            responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required)
+            responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required,features.casemapping)
             for response in responses:
                 shown="AUTHENTICATE <redacted>" if response.startswith("AUTHENTICATE ") and response!="AUTHENTICATE PLAIN" else response
                 print(f">> {shown}");sock.sendall(encode_line(response))
