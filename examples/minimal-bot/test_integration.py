@@ -1,114 +1,64 @@
-import socket
-import threading
-import unittest
-
-from irc_bot import Config, run_session
-
+import socket, threading, unittest
+from irc_bot import Config, run_session, sasl_plain
 
 def recv_line(conn, buf=b""):
     while b"\n" not in buf:
-        chunk = conn.recv(4096)
-        if not chunk:
-            raise EOFError("connection closed before a complete line")
-        buf += chunk
-    raw, buf = buf.split(b"\n", 1)
-    return raw.rstrip(b"\r").decode("utf-8"), buf
-
+        chunk=conn.recv(4096)
+        if not chunk: raise EOFError("connection closed")
+        buf+=chunk
+    raw,buf=buf.split(b"\n",1)
+    return raw.rstrip(b"\r").decode(),buf
 
 class FakeIRCServer:
-    def __init__(self):
-        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.listener.bind(("127.0.0.1", 0))
-        self.listener.listen(1)
-        self.host, self.port = self.listener.getsockname()
-        self.transcript = []
-        self.error = None
-        self.thread = threading.Thread(target=self._serve, daemon=True)
-
-    def start(self):
-        self.thread.start()
-
+    def __init__(self, sasl=False):
+        self.sasl=sasl; self.transcript=[]; self.error=None
+        self.listener=socket.socket(); self.listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        self.listener.bind(("127.0.0.1",0)); self.listener.listen(1)
+        self.host,self.port=self.listener.getsockname()
+        self.thread=threading.Thread(target=self._serve,daemon=True)
+    def start(self): self.thread.start()
     def join(self):
-        self.thread.join(timeout=5)
-        self.listener.close()
-        if self.thread.is_alive():
-            raise TimeoutError("fake IRC server did not finish")
-        if self.error:
-            raise self.error
-
-    def _read(self, conn, buf):
-        line, buf = recv_line(conn, buf)
-        self.transcript.append(line)
-        return line, buf
-
+        self.thread.join(5); self.listener.close()
+        if self.thread.is_alive(): raise TimeoutError("fake IRC server did not finish")
+        if self.error: raise self.error
+    def read(self,c,b):
+        line,b=recv_line(c,b); self.transcript.append(line); return line,b
+    def expect(self,c,b,want):
+        got,b=self.read(c,b)
+        if got!=want: raise AssertionError(f"{got!r} != {want!r}")
+        return b
     def _serve(self):
         try:
-            conn, _ = self.listener.accept()
-            conn.settimeout(3)
-            with conn:
-                buf = b""
-                first, buf = self._read(conn, buf)
-                second, buf = self._read(conn, buf)
-                if not first.startswith("NICK "):
-                    raise AssertionError(first)
-                if not second.startswith("USER "):
-                    raise AssertionError(second)
-
-                # Deliberately fragment the welcome line across TCP writes.
-                conn.sendall(b":fake.example 001 handbookbot :Wel")
-                conn.sendall(b"come to the test server\r\n")
-
-                join, buf = self._read(conn, buf)
-                if join != "JOIN #handbook-test":
-                    raise AssertionError(join)
-
-                # Exercise PING/PONG.
-                conn.sendall(b"PING :integration-token\r\n")
-                pong, buf = self._read(conn, buf)
-                if pong != "PONG :integration-token":
-                    raise AssertionError(pong)
-
-                # Exercise a fragmented PRIVMSG and command response.
-                conn.sendall(b":alice!u@h PRIVMSG #handbook-test :!hel")
-                conn.sendall(b"lo\r\n")
-                reply, buf = self._read(conn, buf)
-                expected = "PRIVMSG #handbook-test :Hello, alice!"
-                if reply != expected:
-                    raise AssertionError(reply)
-        except Exception as exc:
-            self.error = exc
-
+            c,_=self.listener.accept(); c.settimeout(3)
+            with c:
+                b=b""
+                if self.sasl: b=self.expect(c,b,"CAP LS 302")
+                b=self.expect(c,b,"NICK handbookbot")
+                b=self.expect(c,b,"USER handbookbot 0 * :IRC Handbook Bot")
+                if self.sasl:
+                    c.sendall(b":fake CAP handbookbot LS :multi-prefix sasl\r\n")
+                    b=self.expect(c,b,"CAP REQ :sasl")
+                    c.sendall(b":fake CAP handbookbot ACK :sasl\r\n")
+                    b=self.expect(c,b,"AUTHENTICATE PLAIN")
+                    c.sendall(b"AUTHENTICATE +\r\n")
+                    b=self.expect(c,b,"AUTHENTICATE "+sasl_plain("acct","secret"))
+                    c.sendall(b":fake 903 handbookbot :SASL authentication successful\r\n")
+                    b=self.expect(c,b,"CAP END")
+                c.sendall(b":fake 001 handbookbot :Wel"); c.sendall(b"come\r\n")
+                b=self.expect(c,b,"JOIN #handbook-test")
+                c.sendall(b"PING :integration-token\r\n")
+                b=self.expect(c,b,"PONG :integration-token")
+                c.sendall(b":alice!u@h PRIVMSG #handbook-test :!hel"); c.sendall(b"lo\r\n")
+                b=self.expect(c,b,"PRIVMSG #handbook-test :Hello, alice!")
+        except Exception as e: self.error=e
 
 class IntegrationTests(unittest.TestCase):
-    def test_complete_plaintext_local_session(self):
-        server = FakeIRCServer()
-        server.start()
+    def run_case(self,sasl):
+        s=FakeIRCServer(sasl); s.start()
+        cfg=Config(s.host,s.port,"handbookbot","#handbook-test",False,
+                   "acct" if sasl else None,"secret" if sasl else None)
+        run_session(cfg); s.join(); return s
+    def test_complete_plaintext_local_session(self): self.run_case(False)
+    def test_complete_sasl_cap_session(self): self.run_case(True)
 
-        config = Config(
-            host=server.host,
-            port=server.port,
-            nick="handbookbot",
-            channel="#handbook-test",
-            use_tls=False,
-        )
-
-        # Plaintext is allowed only here because this socket is loopback-only
-        # and exists solely as a deterministic protocol test.
-        run_session(config)
-        server.join()
-
-        self.assertEqual(
-            server.transcript,
-            [
-                "NICK handbookbot",
-                "USER handbookbot 0 * :IRC Handbook Bot",
-                "JOIN #handbook-test",
-                "PONG :integration-token",
-                "PRIVMSG #handbook-test :Hello, alice!",
-            ],
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
+if __name__=="__main__": unittest.main()
