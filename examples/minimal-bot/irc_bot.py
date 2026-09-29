@@ -290,7 +290,7 @@ def replay_transcript(lines,features=None,check_invariants=True):
         if check_invariants:assert_registry_invariants(registry)
     return registry
 
-CTCP_DELIM="\\x01"
+CTCP_DELIM="\x01"
 
 @dataclass(frozen=True)
 class CtcpMessage:
