@@ -5,9 +5,9 @@ class BotTests(unittest.TestCase):
  def test_rejects_injection(self):
   with self.assertRaises(ValueError):encode_line("X\r\nOPER bad")
  def test_tag_unescape_is_single_pass(self):
-  self.assertEqual(parse_message("@x=one\\\\stwo\\:three\\q :s CMD").tags["x"],"one\\stwo;threeq")
+  self.assertEqual(parse_message(r"@x=one\\stwo\:three\q :s CMD").tags["x"],r"one\stwo;threeq")
  def test_tag_unescape_does_not_decode_generated_escape(self):
-  self.assertEqual(parse_message(r"@x=\\\\s CMD").tags["x"],r"\s")
+  self.assertEqual(parse_message(r"@x=\\s CMD").tags["x"],r"\s")
  def test_tag_unescape_unknown_escape_drops_only_backslash(self):
   self.assertEqual(parse_message(r"@x=a\qb CMD").tags["x"],"aqb")
  def test_tag_unescape_trailing_backslash_is_dropped(self):
