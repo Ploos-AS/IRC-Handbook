@@ -319,6 +319,14 @@ class BotTests(unittest.TestCase):
   self.assertTrue(first.healthy);self.assertTrue(first.channels.channels);self.assertEqual(first.nick,"Changed")
   second=SessionState("Bot")
   self.assertFalse(second.healthy);self.assertFalse(second.channels.channels);self.assertEqual(second.nick,"Bot")
+ def test_welcome_numeric_sets_authoritative_current_nick(self):
+  s=SessionState("Requested")
+  s.apply(parse_message(":srv 001 Assigned :welcome"))
+  self.assertTrue(s.healthy);self.assertEqual(s.nick,"Assigned")
+  s.apply(parse_message(":Assigned!u@h JOIN #c"))
+  self.assertIn(s.channels.key("#c"),s.channels.channels)
+  s.apply(parse_message(":op!u@h KICK #c Assigned :bye"))
+  self.assertFalse(s.channels.channels)
  def test_session_state_owns_isupport_and_reconfiguration(self):
   s=SessionState("Bot");s.apply(parse_message(":Bot!u@h JOIN !ops"))
   s.apply(parse_message(":srv 005 Bot CHANTYPES=! CASEMAPPING=ascii :supported"))
