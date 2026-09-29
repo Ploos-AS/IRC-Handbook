@@ -156,6 +156,8 @@ class BotTests(unittest.TestCase):
   f=ServerFeatures();f.update(parse_message(":s 005 bot CASEMAPPING=ascii PREFIX=(qaohv)~&@%+ CHANMODES=beI,k,l,imnst :supported"))
   s=ChannelState("#c");s.configure(f)
   s.apply(parse_message(":s 353 bot = #c :~Owner @Op %+Helper Plain"),f.prefix)
+  self.assertTrue(s.names_active);self.assertFalse(s.members)
+  s.apply(parse_message(":s 366 bot #c :End"),f.prefix)
   self.assertEqual(s.members[s.key("Owner")].modes,{"q"})
   self.assertEqual(s.members[s.key("Op")].modes,{"o"})
   self.assertEqual(s.members[s.key("Helper")].modes,{"h","v"})
