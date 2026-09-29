@@ -167,6 +167,37 @@ class ChannelState:
         elif m.command=="NICK" and sender and m.params:self.rename_member(sender,m.params[0])
         elif m.command=="MODE" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.apply_mode(m.params[1],m.params[2:])
 
+CTCP_DELIM="\\x01"
+
+@dataclass(frozen=True)
+class CtcpMessage:
+    command:str
+    argument:str|None=None
+
+def parse_ctcp(text):
+    """Parse one complete CTCP frame; ordinary text returns None."""
+    if len(text)<2 or not (text.startswith(CTCP_DELIM) and text.endswith(CTCP_DELIM)):return None
+    body=text[1:-1]
+    if not body:return None
+    command,sep,argument=body.partition(" ")
+    return CtcpMessage(command.upper(),argument if sep else None)
+
+def ctcp_frame(command,argument=None):
+    if "\\r" in command or "\\n" in command or CTCP_DELIM in command:raise ValueError("invalid CTCP command")
+    if argument is not None and ("\\r" in argument or "\\n" in argument or CTCP_DELIM in argument):raise ValueError("invalid CTCP argument")
+    return CTCP_DELIM+command+((" "+argument) if argument is not None else "")+CTCP_DELIM
+
+def ctcp_reply(m,nick):
+    """Reply only to direct PRIVMSG CTCP queries; never reply to NOTICE or channel CTCP."""
+    if m.command!="PRIVMSG" or len(m.params)<2 or not m.prefix or not irc_equal(m.params[0],nick):return []
+    request=parse_ctcp(m.params[1])
+    if not request or request.command=="ACTION":return []
+    sender=m.prefix.split("!",1)[0]
+    if request.command=="VERSION":return [f"NOTICE {sender} :"+ctcp_frame("VERSION","IRC Handbook educational bot")]
+    if request.command=="PING" and request.argument is not None:return [f"NOTICE {sender} :"+ctcp_frame("PING",request.argument)]
+    if request.command=="TIME":return [f"NOTICE {sender} :"+ctcp_frame("TIME","not exposed by educational bot")]
+    return []
+
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
@@ -188,8 +219,11 @@ def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_re
         if sasl_required:raise AuthenticationError("SASL authentication failed")
         return ["CAP END"]
     if m.command=="001":return [f"JOIN {channel}"]
+    ctcp=ctcp_reply(m,nick)
+    if ctcp:return ctcp
     if m.command=="PRIVMSG" and len(m.params)>=2 and m.prefix:
         sender=m.prefix.split("!",1)[0];target,text=m.params[0],m.params[1]
+        if parse_ctcp(text):return []
         if text.strip()=="!hello":return [f"PRIVMSG {sender if irc_equal(target,nick) else target} :Hello, {sender}!"]
     return []
 def response_for_line(line,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
