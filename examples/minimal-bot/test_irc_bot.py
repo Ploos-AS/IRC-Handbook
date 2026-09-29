@@ -1,5 +1,5 @@
 import socket,threading,time,unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,ConnectionClosed,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain,iter_lines
+from irc_bot import AuthenticationError,Backoff,CapabilityState,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_authenticate_lines,sasl_plain,iter_lines
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -49,6 +49,33 @@ class BotTests(unittest.TestCase):
   with self.assertRaises(ValueError):parse_mode_changes("+o",[],"ov",("beI","k","l","imnst"))
  def test_mode_extra_parameter(self):
   with self.assertRaises(ValueError):parse_mode_changes("+i",["unused"],"ov",("beI","k","l","imnst"))
+ def test_names_generation_removes_stale_members(self):
+  s=ChannelState("#c");s.add_member("Stale")
+  s.apply(parse_message(":s 353 bot = #c :@Alice Bob"),{"o":"@","v":"+"})
+  self.assertIn(s.key("Stale"),s.members)
+  s.apply(parse_message(":s 366 bot #c :End"),{"o":"@","v":"+"})
+  self.assertNotIn(s.key("Stale"),s.members);self.assertIn(s.key("Alice"),s.members)
+ def test_event_during_names_survives_snapshot_end(self):
+  s=ChannelState("#c")
+  s.apply(parse_message(":s 353 bot = #c :Alice"),{"o":"@","v":"+"})
+  s.apply(parse_message(":Late!u@h JOIN #c"),{"o":"@","v":"+"})
+  s.names_seen.add(s.key("Late"))
+  s.apply(parse_message(":s 366 bot #c :End"),{"o":"@","v":"+"})
+  self.assertIn(s.key("Late"),s.members)
+ def test_registry_routes_multiple_channels(self):
+  f=ServerFeatures({"CASEMAPPING":"ascii","PREFIX":"(ov)@+","CHANMODES":"beI,k,l,imnst"});r=ChannelRegistry(f)
+  for line in [":s 353 bot = #one :@Alice",":s 366 bot #one :End",":s 353 bot = #two :+Bob",":s 366 bot #two :End"]:
+   r.apply(parse_message(line))
+  self.assertIn(r.get("#one").key("Alice"),r.get("#one").members)
+  self.assertNotIn(r.get("#one").key("Bob"),r.get("#one").members)
+  self.assertIn(r.get("#two").key("Bob"),r.get("#two").members)
+ def test_registry_global_nick_and_quit(self):
+  f=ServerFeatures();r=ChannelRegistry(f)
+  for ch in ("#a","#b"):r.get(ch).add_member("Alice")
+  r.apply(parse_message(":Alice!u@h NICK Alicia"))
+  self.assertTrue(all(s.key("Alicia") in s.members for s in r.channels.values()))
+  r.apply(parse_message(":Alicia!u@h QUIT :gone"))
+  self.assertTrue(all(not s.members for s in r.channels.values()))
  def test_names_replay_with_dynamic_prefixes(self):
   f=ServerFeatures();f.update(parse_message(":s 005 bot CASEMAPPING=ascii PREFIX=(qaohv)~&@%+ CHANMODES=beI,k,l,imnst :supported"))
   s=ChannelState("#c");s.configure(f)
