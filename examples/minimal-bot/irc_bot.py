@@ -78,6 +78,32 @@ def parse_isupport(m):
 
 def is_numeric(m):
     return len(m.command)==3 and m.command.isdigit()
+
+def parse_prefix(value):
+    """Return {mode: prefix}, e.g. PREFIX=(ov)@+ -> {'o':'@','v':'+'}."""
+    if not isinstance(value,str) or not value.startswith("(") or ")" not in value:return {}
+    modes,prefixes=value[1:].split(")",1)
+    if len(modes)!=len(prefixes):return {}
+    return dict(zip(modes,prefixes))
+
+def parse_chanmodes(value):
+    """Split CHANMODES=A,B,C,D into its four mode classes."""
+    if not isinstance(value,str):return ()
+    groups=value.split(",")
+    return tuple(groups) if len(groups)==4 else ()
+
+def irc_casefold(value,mapping="rfc1459"):
+    """Case-fold IRC identifiers according to CASEMAPPING."""
+    folded=value.lower()
+    if mapping=="ascii":return folded
+    table=str.maketrans({"[":"{","]":"}","\\":"|"})
+    folded=folded.translate(table)
+    if mapping=="rfc1459":folded=folded.replace("^","~")
+    elif mapping!="strict-rfc1459":raise ValueError("unsupported CASEMAPPING")
+    return folded
+
+def irc_equal(a,b,mapping="rfc1459"):
+    return irc_casefold(a,mapping)==irc_casefold(b,mapping)
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
@@ -101,7 +127,7 @@ def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_re
     if m.command=="001":return [f"JOIN {channel}"]
     if m.command=="PRIVMSG" and len(m.params)>=2 and m.prefix:
         sender=m.prefix.split("!",1)[0];target,text=m.params[0],m.params[1]
-        if text.strip()=="!hello":return [f"PRIVMSG {sender if target.lower()==nick.lower() else target} :Hello, {sender}!"]
+        if text.strip()=="!hello":return [f"PRIVMSG {sender if irc_equal(target,nick) else target} :Hello, {sender}!"]
     return []
 def response_for_line(line,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     try:m=parse_message(line)
