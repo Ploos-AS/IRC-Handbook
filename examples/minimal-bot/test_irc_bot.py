@@ -1,5 +1,5 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,ChannelState,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,CapabilityState,ChannelState,Negotiation,CtcpMessage,ModeChange,ServerError,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -105,6 +105,24 @@ class BotTests(unittest.TestCase):
  def test_message_metadata(self):
   m=parse_message("@time=2026-09-29T10:00:00.000Z;account=alice;msgid=abc;batch=42 :a!u@h PRIVMSG #c :hi")
   self.assertEqual(message_metadata(m),{"time":"2026-09-29T10:00:00.000Z","account":"alice","msgid":"abc","batch":"42"})
+ def test_negotiation_waits_for_final_ls(self):
+  n=Negotiation(True,True)
+  self.assertEqual(n.actions(parse_message(":s CAP b LS * :server-time account-tag")),[])
+  self.assertEqual(n.actions(parse_message(":s CAP b LS :sasl=PLAIN message-tags")),["CAP REQ :server-time account-tag message-tags sasl"])
+ def test_negotiation_without_sasl(self):
+  n=Negotiation()
+  self.assertEqual(n.actions(parse_message(":s CAP b LS :server-time sasl account-tag")),["CAP REQ :server-time account-tag"])
+ def test_negotiation_ack_sasl_starts_auth(self):
+  n=Negotiation(True,True)
+  n.actions(parse_message(":s CAP b LS :sasl server-time"))
+  self.assertEqual(n.actions(parse_message(":s CAP b ACK :server-time sasl")),["AUTHENTICATE PLAIN"])
+ def test_negotiation_ack_without_sasl_ends_cap(self):
+  n=Negotiation()
+  n.actions(parse_message(":s CAP b LS :server-time"))
+  self.assertEqual(n.actions(parse_message(":s CAP b ACK :server-time")),["CAP END"])
+ def test_negotiation_required_sasl_missing(self):
+  n=Negotiation(True,True)
+  with self.assertRaises(AuthenticationError):n.actions(parse_message(":s CAP b LS :server-time"))
  def test_ping(self):self.assertEqual(response_for_line("PING :s","b","#c"),["PONG :s"])
  def test_433(self):self.assertEqual(response_for_line(":s 433 * b :used","b","#c"),["NICK b_"])
  def test_error(self):
