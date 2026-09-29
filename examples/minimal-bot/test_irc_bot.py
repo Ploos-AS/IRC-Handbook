@@ -1,5 +1,5 @@
 import pathlib,socket,threading,time,unittest
-from irc_bot import AuthenticationError,Backoff,CapabilityState,assert_registry_invariants,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,channel_snapshot,CtcpMessage,Member,ModeChange,ServerError,ServerFeatures,SessionResult,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,mutate_transcript,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,registry_snapshot,replay_transcript,response_for_line,sasl_authenticate_lines,sasl_plain,snapshot_diff,iter_lines
+from irc_bot import AuthenticationError,Backoff,CapabilityState,assert_registry_invariants,ConnectionClosed,ChannelRegistry,ChannelState,Negotiation,channel_snapshot,CtcpMessage,Member,ModeChange,ServerError,ServerFeatures,SessionResult,SessionState,StopFlag,ctcp_frame,encode_line,irc_casefold,irc_equal,is_numeric,message_metadata,mutate_transcript,parse_capabilities,parse_ctcp,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,registry_snapshot,replay_transcript,response_for_line,sasl_authenticate_lines,sasl_plain,snapshot_diff,iter_lines
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -313,6 +313,16 @@ class BotTests(unittest.TestCase):
  def test_iter_lines_handles_fragmentation(self):
   left,right=socket.socketpair();right.sendall(b"PING :a\r");right.sendall(b"\nPING :b\r\n");right.shutdown(socket.SHUT_WR)
   self.assertEqual(list(iter_lines(left,poll_timeout=.02)),["PING :a","PING :b"]);right.close();left.close()
+ def test_session_state_is_fresh_per_connection(self):
+  first=SessionState("Bot");first.apply(parse_message(":s 001 Bot :welcome"))
+  first.apply(parse_message(":Bot!u@h JOIN #old"));first.apply(parse_message(":Bot!u@h NICK Changed"))
+  self.assertTrue(first.healthy);self.assertTrue(first.channels.channels);self.assertEqual(first.nick,"Changed")
+  second=SessionState("Bot")
+  self.assertFalse(second.healthy);self.assertFalse(second.channels.channels);self.assertEqual(second.nick,"Bot")
+ def test_session_state_owns_isupport_and_reconfiguration(self):
+  s=SessionState("Bot");s.apply(parse_message(":Bot!u@h JOIN !ops"))
+  s.apply(parse_message(":srv 005 Bot CHANTYPES=! CASEMAPPING=ascii :supported"))
+  self.assertEqual(s.features.chantypes,"!");self.assertEqual(s.features.casemapping,"ascii")
  def test_session_result_distinguishes_health_and_stop(self):
   self.assertEqual(SessionResult(False,False),SessionResult(False))
   self.assertTrue(SessionResult(True,True).healthy);self.assertTrue(SessionResult(True,True).stopped)
