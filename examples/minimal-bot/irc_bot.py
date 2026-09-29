@@ -43,7 +43,17 @@ class StopFlag:
 def encode_line(line):
     if "\r" in line or "\n" in line:raise ValueError("IRC lines must not contain CR or LF")
     return (line+"\r\n").encode()
-def _unescape_tag(v):return v.replace(r"\:",";").replace(r"\s"," ").replace(r"\\","\\").replace(r"\r","\r").replace(r"\n","\n")
+def _unescape_tag(v):
+    out=[];i=0;esc={":":";","s":" ","\\":"\\","r":"\r","n":"\n"}
+    while i<len(v):
+        if v[i]=="\\":
+            i+=1
+            if i>=len(v):break
+            out.append(esc.get(v[i],v[i]))
+        else:
+            out.append(v[i])
+        i+=1
+    return "".join(out)
 def parse_message(line):
     tags={};prefix=None;rest=line
     if rest.startswith("@"):
