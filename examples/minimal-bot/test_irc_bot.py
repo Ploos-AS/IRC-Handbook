@@ -40,6 +40,20 @@ class BotTests(unittest.TestCase):
  def test_server_features_unknown_casemapping_falls_back(self):
   f=ServerFeatures({"CASEMAPPING":"future-map"})
   self.assertEqual(f.casemapping,"rfc1459")
+ def test_server_features_chantypes(self):
+  self.assertEqual(ServerFeatures().chantypes,"#&")
+  self.assertEqual(ServerFeatures({"CHANTYPES":"#&+"}).chantypes,"#&+")
+ def test_reconfigure_rekeys_members_after_casemapping_change(self):
+  f=ServerFeatures({"CASEMAPPING":"ascii"});r=ChannelRegistry(f);s=r.get("#c")
+  s.add_member("[Nick]",{"o"});self.assertIn("[nick]",s.members)
+  f.values["CASEMAPPING"]="rfc1459";r.reconfigure();s=r.get("#c")
+  self.assertIn("{nick}",s.members);self.assertNotIn("[nick]",s.members)
+  self.assertEqual(s.members["{nick}"].modes,{"o"});self.assertTrue(assert_registry_invariants(r))
+ def test_registry_mode_uses_server_chantypes(self):
+  f=ServerFeatures({"CHANTYPES":"!"});r=ChannelRegistry(f)
+  r.get("!ops").add_member("Alice")
+  r.apply(parse_message(":op MODE !ops +o Alice"))
+  self.assertEqual(r.get("!ops").members[r.get("!ops").key("Alice")].modes,{"o"})
  def test_prefix(self):
   self.assertEqual(parse_prefix("(qaohv)~&@%+"),{"q":"~","a":"&","o":"@","h":"%","v":"+"})
   self.assertEqual(parse_prefix("(ov)@"),{})
