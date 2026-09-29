@@ -1,5 +1,5 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,ServerError,StopFlag,encode_line,irc_casefold,irc_equal,is_numeric,parse_chanmodes,parse_isupport,parse_message,parse_prefix,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,ModeChange,ServerError,StopFlag,encode_line,irc_casefold,irc_equal,is_numeric,parse_chanmodes,parse_isupport,parse_message,parse_mode_changes,parse_prefix,response_for_line,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -25,6 +25,19 @@ class BotTests(unittest.TestCase):
  def test_chanmodes(self):
   self.assertEqual(parse_chanmodes("beI,k,l,imnst"),("beI","k","l","imnst"))
   self.assertEqual(parse_chanmodes("broken"),())
+ def test_member_mode_sequence(self):
+  got=parse_mode_changes("+ov-v",["alice","bob","carol"],"ov",("beI","k","l","imnst"))
+  self.assertEqual(got,[ModeChange(True,"o","alice"),ModeChange(True,"v","bob"),ModeChange(False,"v","carol")])
+ def test_list_key_limit_and_flag_modes(self):
+  cm=("beI","k","l","imnst")
+  self.assertEqual(parse_mode_changes("+b-k+l+i",["*!*@bad","oldkey","50"],"ov",cm),
+   [ModeChange(True,"b","*!*@bad"),ModeChange(False,"k","oldkey"),ModeChange(True,"l","50"),ModeChange(True,"i",None)])
+ def test_unset_limit_needs_no_parameter(self):
+  self.assertEqual(parse_mode_changes("-l",[],"ov",("beI","k","l","imnst")),[ModeChange(False,"l",None)])
+ def test_mode_missing_parameter(self):
+  with self.assertRaises(ValueError):parse_mode_changes("+o",[],"ov",("beI","k","l","imnst"))
+ def test_mode_extra_parameter(self):
+  with self.assertRaises(ValueError):parse_mode_changes("+i",["unused"],"ov",("beI","k","l","imnst"))
  def test_casemapping_ascii(self):
   self.assertTrue(irc_equal("Nick","NICK","ascii"))
   self.assertFalse(irc_equal("[","{","ascii"))
