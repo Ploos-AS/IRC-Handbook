@@ -230,6 +230,33 @@ def message_metadata(m):
     """Expose common IRCv3 message tags without requiring them."""
     return {k:m.tags.get(k) for k in ("time","account","msgid","batch") if k in m.tags}
 
+DESIRED_CAPS=("server-time","account-tag","message-tags")
+
+class Negotiation:
+    """Stateful CAP negotiation for one connection."""
+    def __init__(self,use_sasl=False,sasl_required=False):
+        self.caps=CapabilityState();self.use_sasl=use_sasl;self.sasl_required=sasl_required
+    def actions(self,m):
+        if m.command!="CAP" or len(m.params)<2:return []
+        sub=m.params[1].upper();self.caps.apply(m)
+        if sub=="LS":
+            continuation=len(m.params)>=3 and m.params[-2]=="*"
+            if continuation:return []
+            wanted=[c for c in DESIRED_CAPS if c in self.caps.available]
+            if self.use_sasl:
+                if "sasl" in self.caps.available:wanted.append("sasl")
+                elif self.sasl_required:raise AuthenticationError("server does not advertise SASL")
+            return [("CAP REQ :"+ " ".join(wanted))] if wanted else ["CAP END"]
+        if sub=="ACK":
+            acknowledged=parse_capabilities(m.params[-1])
+            if self.use_sasl and "sasl" in acknowledged:return ["AUTHENTICATE PLAIN"]
+            return ["CAP END"]
+        if sub=="NAK":
+            rejected=parse_capabilities(m.params[-1])
+            if self.sasl_required and "sasl" in rejected:raise AuthenticationError("server rejected SASL capability")
+            return ["CAP END"]
+        return []
+
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
@@ -274,15 +301,19 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag()
+    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required)
     with connect(c) as sock:
-        if c.use_sasl:sock.sendall(encode_line("CAP LS 302"))
+        sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
         for line in iter_lines(sock):
             if stop.requested:
                 sock.sendall(encode_line("QUIT :Shutting down"));return
             print(f"<< {line}")
-            for response in response_for_line(line,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required):
+            try:m=parse_message(line)
+            except ValueError:continue
+            negotiated=negotiation.actions(m)
+            responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required)
+            for response in responses:
                 print(f">> {response}");sock.sendall(encode_line(response))
 def validate(c):
     if (c.sasl_user is None)!=(c.sasl_password is None):raise SystemExit("set both IRC_SASL_USER and IRC_SASL_PASSWORD")
