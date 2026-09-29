@@ -125,6 +125,48 @@ def parse_mode_changes(mode_string,parameters=(),prefix_modes="",chanmodes=()):
     try:next(params)
     except StopIteration:return out
     raise ValueError("unused MODE parameters")
+
+@dataclass
+class Member:
+    nick:str
+    modes:set[str]
+
+class ChannelState:
+    """Small replayable model of one IRC channel."""
+    def __init__(self,name,casemapping="rfc1459",prefix_modes="ov",chanmodes=("beI","k","l","imnst")):
+        self.name=name;self.casemapping=casemapping;self.prefix_modes=prefix_modes;self.chanmodes=chanmodes
+        self.members={};self.modes=set();self.mode_values={};self.lists={m:set() for m in chanmodes[0]}
+    def key(self,nick):return irc_casefold(nick,self.casemapping)
+    def add_member(self,nick):self.members.setdefault(self.key(nick),Member(nick,set()))
+    def remove_member(self,nick):self.members.pop(self.key(nick),None)
+    def rename_member(self,old,new):
+        member=self.members.pop(self.key(old),None)
+        if member:self.members[self.key(new)]=Member(new,member.modes)
+    def apply_mode(self,mode_string,parameters=()):
+        for change in parse_mode_changes(mode_string,parameters,self.prefix_modes,self.chanmodes):
+            if change.mode in self.prefix_modes:
+                member=self.members.get(self.key(change.parameter))
+                if member:
+                    (member.modes.add if change.adding else member.modes.discard)(change.mode)
+            elif change.mode in self.chanmodes[0]:
+                values=self.lists.setdefault(change.mode,set())
+                (values.add if change.adding else values.discard)(change.parameter)
+            elif change.mode in self.chanmodes[1]+self.chanmodes[2]:
+                if change.adding:
+                    self.modes.add(change.mode);self.mode_values[change.mode]=change.parameter
+                else:
+                    self.modes.discard(change.mode);self.mode_values.pop(change.mode,None)
+            else:
+                (self.modes.add if change.adding else self.modes.discard)(change.mode)
+    def apply(self,m):
+        sender=m.prefix.split("!",1)[0] if m.prefix else None
+        if m.command=="JOIN" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.add_member(sender)
+        elif m.command=="PART" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(sender)
+        elif m.command=="KICK" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(m.params[1])
+        elif m.command=="QUIT" and sender:self.remove_member(sender)
+        elif m.command=="NICK" and sender and m.params:self.rename_member(sender,m.params[0])
+        elif m.command=="MODE" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.apply_mode(m.params[1],m.params[2:])
+
 def actions_for_message(m,nick,channel,sasl_user=None,sasl_password=None,sasl_required=False):
     use_sasl=sasl_user is not None and sasl_password is not None
     if m.command=="ERROR":raise ServerError(m.params[-1] if m.params else "IRC server error")
