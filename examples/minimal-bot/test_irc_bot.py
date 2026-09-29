@@ -1,5 +1,5 @@
 import unittest
-from irc_bot import AuthenticationError,Backoff,ServerError,StopFlag,encode_line,parse_message,response_for_line,sasl_plain
+from irc_bot import AuthenticationError,Backoff,ServerError,StopFlag,encode_line,is_numeric,parse_isupport,parse_message,response_for_line,sasl_plain
 class BotTests(unittest.TestCase):
  def test_line_encoding(self):self.assertEqual(encode_line("PING :abc"),b"PING :abc\r\n")
  def test_rejects_injection(self):
@@ -7,6 +7,18 @@ class BotTests(unittest.TestCase):
  def test_parser(self):
   m=parse_message("@time=x;flag :n!u@h PRIVMSG #c :hello world")
   self.assertEqual((m.tags,m.prefix,m.command,m.params),({"time":"x","flag":None},"n!u@h","PRIVMSG",["#c","hello world"]))
+ def test_middle_and_trailing_params(self):
+  m=parse_message(":s COMMAND one two :three four")
+  self.assertEqual(m.params,["one","two","three four"])
+ def test_numeric_detection(self):
+  self.assertTrue(is_numeric(parse_message(":s 005 b CHANTYPES=# :supported")))
+  self.assertFalse(is_numeric(parse_message(":s PRIVMSG b :hello")))
+ def test_isupport(self):
+  m=parse_message(":s 005 b CHANTYPES=#& PREFIX=(ov)@+ CASEMAPPING=rfc1459 NICKLEN=30 :are supported")
+  self.assertEqual(parse_isupport(m),{"CHANTYPES":"#&","PREFIX":"(ov)@+","CASEMAPPING":"rfc1459","NICKLEN":"30"})
+ def test_isupport_boolean_and_removed(self):
+  m=parse_message(":s 005 b SAFELIST -WHOX :are supported")
+  self.assertEqual(parse_isupport(m),{"SAFELIST":True,"WHOX":False})
  def test_ping(self):self.assertEqual(response_for_line("PING :s","b","#c"),["PONG :s"])
  def test_433(self):self.assertEqual(response_for_line(":s 433 * b :used","b","#c"),["NICK b_"])
  def test_error(self):
