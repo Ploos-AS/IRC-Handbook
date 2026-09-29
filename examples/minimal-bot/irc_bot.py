@@ -166,16 +166,26 @@ class ChannelState:
     def __init__(self,name,casemapping="rfc1459",prefix_modes="ov",chanmodes=("beI","k","l","imnst")):
         self.name=name;self.casemapping=casemapping;self.prefix_modes=prefix_modes;self.chanmodes=chanmodes
         self.members={};self.modes=set();self.mode_values={};self.lists={m:set() for m in chanmodes[0]}
+        self.names_active=False;self.names_seen=set()
     def key(self,nick):return irc_casefold(nick,self.casemapping)
     def add_member(self,nick,modes=()):
         member=self.members.setdefault(self.key(nick),Member(nick,set()));member.modes.update(modes);return member
+    def begin_names(self):
+        if not self.names_active:self.names_active=True;self.names_seen=set()
+    def end_names(self):
+        if self.names_active:
+            for key in list(self.members):
+                if key not in self.names_seen:self.members.pop(key,None)
+            self.names_active=False;self.names_seen=set()
     def add_names(self,text,prefix_map=None):
+        self.begin_names()
         prefix_map=prefix_map or {m:p for m,p in zip(self.prefix_modes,"@+"[:len(self.prefix_modes)])}
         by_prefix={p:m for m,p in prefix_map.items()}
         for token in text.split():
             modes=set()
             while token and token[0] in by_prefix:modes.add(by_prefix[token[0]]);token=token[1:]
-            if token:self.add_member(token,modes)
+            if token:
+                member=self.add_member(token,modes);self.names_seen.add(self.key(member.nick))
     def configure(self,features):
         self.casemapping=features.casemapping;self.prefix_modes="".join(features.prefix);self.chanmodes=features.chanmodes
         self.lists={m:self.lists.get(m,set()) for m in self.chanmodes[0]}
@@ -203,13 +213,36 @@ class ChannelState:
         sender=m.prefix.split("!",1)[0] if m.prefix else None
         if m.command=="353" and len(m.params)>=4 and irc_equal(m.params[2],self.name,self.casemapping):
             self.add_names(m.params[3],prefix_map);return
-        if m.command=="366" and len(m.params)>=2 and irc_equal(m.params[1],self.name,self.casemapping):return
+        if m.command=="366" and len(m.params)>=2 and irc_equal(m.params[1],self.name,self.casemapping):self.end_names();return
         if m.command=="JOIN" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.add_member(sender)
         elif m.command=="PART" and sender and m.params and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(sender)
         elif m.command=="KICK" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.remove_member(m.params[1])
         elif m.command=="QUIT" and sender:self.remove_member(sender)
         elif m.command=="NICK" and sender and m.params:self.rename_member(sender,m.params[0])
         elif m.command=="MODE" and len(m.params)>=2 and irc_equal(m.params[0],self.name,self.casemapping):self.apply_mode(m.params[1],m.params[2:])
+
+class ChannelRegistry:
+    """Route channel events to independent ChannelState instances."""
+    def __init__(self,features):
+        self.features=features;self.channels={}
+    def key(self,name):return irc_casefold(name,self.features.casemapping)
+    def get(self,name):
+        key=self.key(name)
+        if key not in self.channels:
+            self.channels[key]=ChannelState(name);self.channels[key].configure(self.features)
+        return self.channels[key]
+    def reconfigure(self):
+        old=list(self.channels.values());self.channels={}
+        for state in old:
+            state.configure(self.features);self.channels[self.key(state.name)]=state
+    def apply(self,m):
+        if m.command=="353" and len(m.params)>=4:self.get(m.params[2]).apply(m,self.features.prefix);return
+        if m.command=="366" and len(m.params)>=2:self.get(m.params[1]).apply(m,self.features.prefix);return
+        if m.command in {"JOIN","PART"} and m.params:self.get(m.params[0]).apply(m,self.features.prefix);return
+        if m.command=="KICK" and m.params:self.get(m.params[0]).apply(m,self.features.prefix);return
+        if m.command=="MODE" and m.params and m.params[0] and m.params[0][0] in "#&+!":self.get(m.params[0]).apply(m,self.features.prefix);return
+        if m.command in {"QUIT","NICK"}:
+            for state in self.channels.values():state.apply(m,self.features.prefix)
 
 CTCP_DELIM="\\x01"
 
@@ -347,7 +380,7 @@ def connect(c):
     raw=socket.create_connection((c.host,c.port),timeout=30)
     return raw if not c.use_tls else ssl.create_default_context().wrap_socket(raw,server_hostname=c.host)
 def run_session(c,stop=None):
-    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();channel_state=ChannelState(c.channel);healthy=False
+    stop=stop or StopFlag();negotiation=Negotiation(c.use_sasl,c.sasl_required);features=ServerFeatures();channels=ChannelRegistry(features);healthy=False
     with connect(c) as sock:
         sock.sendall(encode_line("CAP LS 302"))
         sock.sendall(encode_line(f"NICK {c.nick}"));sock.sendall(encode_line(f"USER {c.nick} 0 * :IRC Handbook Bot"))
@@ -358,8 +391,8 @@ def run_session(c,stop=None):
             except ValueError:continue
             if m.command=="001":healthy=True
             if m.command=="005":
-                features.update(m);channel_state.configure(features)
-            channel_state.apply(m,features.prefix)
+                features.update(m);channels.reconfigure()
+            channels.apply(m)
             negotiated=negotiation.actions(m)
             responses=negotiated if m.command=="CAP" else actions_for_message(m,c.nick,c.channel,c.sasl_user,c.sasl_password,c.sasl_required,features.casemapping)
             for response in responses:
