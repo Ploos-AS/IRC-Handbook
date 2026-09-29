@@ -437,15 +437,18 @@ class Registration:
         if m.command=="433":
             self.phase="registering";return [f"NICK {current_nick}_"]
         if m.command=="CAP":
+            if self.phase=="registered":return []
             out=self.negotiation.actions(m)
             if any(x=="AUTHENTICATE PLAIN" for x in out):self.phase="sasl"
             elif any(x=="CAP END" for x in out):self.phase="registering"
             return out
-        if m.command=="AUTHENTICATE" and m.params==["+"] and sasl_user is not None and sasl_password is not None:
-            self.phase="sasl";return sasl_authenticate_lines(sasl_user,sasl_password)
+        if m.command=="AUTHENTICATE" and m.params==["+"] and self.phase=="sasl" and sasl_user is not None and sasl_password is not None:
+            return sasl_authenticate_lines(sasl_user,sasl_password)
         if m.command=="903":
+            if self.phase!="sasl":return []
             self.phase="registering";return ["CAP END"]
         if m.command in {"904","905","906","907"} and sasl_user is not None:
+            if self.phase!="sasl":return []
             if self.negotiation.sasl_required:raise AuthenticationError("SASL authentication failed")
             self.phase="registering";return ["CAP END"]
         if m.command=="001":
